@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file SimpleLinearNDInterpolator.cpp
  * @brief N次元線形補間器の実装
  * 
@@ -46,8 +46,8 @@ SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
 {
     points_ = points;
     values_ = values;
-    n_dims_ = points.size();
-    n_points_ = points[0].size();
+    n_dims_ = static_cast<int>(points.size());
+    n_points_ = static_cast<int>(points[0].size());
 
     buildTriangulation(points_);
 }

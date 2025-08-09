@@ -1,4 +1,4 @@
-#include <vector>
+﻿#include <vector>
 #include <memory>
 
 namespace orgQhull {
