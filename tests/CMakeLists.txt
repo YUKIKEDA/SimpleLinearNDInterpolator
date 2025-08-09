@@ -2,9 +2,13 @@
 
 # ソースファイルを設定（テスト用に必要な実装を含める）
 set(TEST_SOURCES
-    test_simple_linear_nd_interpolator.cpp
-    ${CMAKE_SOURCE_DIR}/src/SimpleLinearNDInterpolator.cpp
+  ${CMAKE_SOURCE_DIR}/src/SimpleLinearNDInterpolator.cpp
 )
+
+# 自動生成テストが存在する場合は取り込む
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/generated_scipy_compat_test.cpp)
+  list(APPEND TEST_SOURCES generated_scipy_compat_test.cpp)
+endif()
 
 # テスト用の実行可能ファイルを作成
 add_executable(

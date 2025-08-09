@@ -106,7 +106,7 @@ SimpleLinearNDInterpolator::~SimpleLinearNDInterpolator()
 std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
     const std::vector<std::vector<double>> &query_points) const
 {
-    const double eps = 1e-10;
+    const double eps = 1e-12;
 
     // 入力チェック
     for (const auto &qp : query_points)
@@ -204,19 +204,21 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate(
 void SimpleLinearNDInterpolator::buildTriangulation(
     const std::vector<std::vector<double>> &points)
 {
-    // 点群を1次元化
+    // 点群を Qhull 期待形式 [x1,y1,..., x2,y2,...] にフラット化（point-major）
     std::vector<double> flattened_points;
-    flattened_points.reserve(points.size() * points[0].size());
-    for (const auto& point : points) {
-        flattened_points.insert(flattened_points.end(), point.begin(), point.end());
+    flattened_points.reserve(static_cast<size_t>(n_points_ * n_dims_));
+    for (int i = 0; i < n_points_; ++i) {
+        for (int d = 0; d < n_dims_; ++d) {
+            flattened_points.push_back(points[static_cast<size_t>(d)][static_cast<size_t>(i)]);
+        }
     }
 
     // Qhullオプションの設定
-    std::string qhull_options = "d Qbb Qc Qz Q12";
+    // Delaunay をシンプレクス分割にする（Qt）。高次元は Qx で数値安定化
+    std::string qhull_options = "d Qbb Qc Qz Q12 Qt";
     if (n_dims_ >= 5) {
         qhull_options += " Qx";
     }
-    qhull_options += " Qt";
 
     try
     {
@@ -621,10 +623,10 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::convertTo2DVector(
     const std::vector<double> &values
 ) const
 {
-    std::vector<std::vector<double>> values_2d;
-    values_2d.reserve(values.size());
-    for (const auto& value : values) {
-        values_2d.push_back({value});
-    }
+    // スカラー値ベクトルを「値次元優先（value-major）」形式へ
+    // 期待する内部形: values_[value_dim][point_index]
+    // スカラーの場合は value_dim = 0 の 1 行に全点分を格納する
+    std::vector<std::vector<double>> values_2d(1);
+    values_2d[0] = values; // 1 x N
     return values_2d;
 }
