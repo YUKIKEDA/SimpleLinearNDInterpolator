@@ -156,14 +156,11 @@ def build_cpp_test(points: np.ndarray, values: np.ndarray, queries: np.ndarray, 
     n = points.shape[0]
     m = queries.shape[0]
 
-    # 次元優先（dimension-major）の配列に変換
-    coords_by_dim = [points[:, dim].tolist() for dim in range(d)]
-
-    # 文字列化
+    # point-major で C++ 配列を生成: [{x,y,...}, ...]
     cpp_points_lines = []
-    for dim_idx, coord in enumerate(coords_by_dim):
-        numbers = ", ".join(format_float_for_cpp(x) for x in coord)
-        cpp_points_lines.append(f"    /* dim {dim_idx} */ {{ {numbers} }}")
+    for i in range(n):
+        numbers = ", ".join(format_float_for_cpp(x) for x in points[i].tolist())
+        cpp_points_lines.append(f"    /* p{i} */ {{ {numbers} }}")
     cpp_points_body = ",\n".join(cpp_points_lines)
 
     cpp_values = ", ".join(format_float_for_cpp(x) for x in values.tolist())
@@ -224,12 +221,11 @@ def build_cpp_test_case(points: np.ndarray, values: np.ndarray, queries: np.ndar
     n = points.shape[0]
     m = queries.shape[0]
 
-    coords_by_dim = [points[:, dim].tolist() for dim in range(d)]
-
+    # point-major で C++ 配列を生成
     cpp_points_lines = []
-    for dim_idx, coord in enumerate(coords_by_dim):
-        numbers = ", ".join(format_float_for_cpp(x) for x in coord)
-        cpp_points_lines.append(f"    /* dim {dim_idx} */ {{ {numbers} }}")
+    for i in range(n):
+        numbers = ", ".join(format_float_for_cpp(x) for x in points[i].tolist())
+        cpp_points_lines.append(f"    /* p{i} */ {{ {numbers} }}")
     cpp_points_body = ",\n".join(cpp_points_lines)
 
     cpp_values = ", ".join(format_float_for_cpp(x) for x in values.tolist())

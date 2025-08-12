@@ -52,6 +52,26 @@ public:
      * @note 最低でもN+1個の点が必要です（Nは空間の次元数）
      * @note 全ての点は同じ次元を持つ必要があります
      * @note 全ての値ベクトルは同じ次元を持つ必要があります
+     * 
+     * @example
+     * std::vector<std::vector<double>> points = { // 2次元平面上の点群から3次元ベクトル値を補間する例
+     *     {0.0, 0.0},  // 原点
+     *     {1.0, 0.0},  // x軸上の点
+     *     {0.0, 1.0},  // y軸上の点
+     *     {1.0, 1.0}   // 対角線上の点
+     * };
+     * 
+     * std::vector<std::vector<double>> values = {
+     *     {1.0, 0.0, 0.0},  // 赤色ベクトル
+     *     {0.0, 1.0, 0.0},  // 緑色ベクトル
+     *     {0.0, 0.0, 1.0},  // 青色ベクトル
+     *     {0.5, 0.5, 0.5}   // グレー色ベクトル
+     * };
+     * 
+     * SimpleLinearNDInterpolator interpolator(points, values);
+     * 
+     * std::vector<double> query_point = {0.5, 0.5}; // 補間点での値を取得
+     * std::vector<double> interpolated_value = interpolator.interpolate(query_point);
      */
     SimpleLinearNDInterpolator(
         const std::vector<std::vector<double>> &points, 
@@ -76,6 +96,27 @@ public:
      * 
      * @note 最低でもN+1個の点が必要です（Nは空間の次元数）
      * @note 全ての点は同じ次元を持つ必要があります
+     * 
+     * @example
+     * std::vector<std::vector<double>> points = { // 2次元平面上の点群からスカラー値を補間する例（温度分布など）
+     *     {0.0, 0.0},  // 原点
+     *     {1.0, 0.0},  // x軸上の点
+     *     {0.0, 1.0},  // y軸上の点
+     *     {1.0, 1.0}   // 対角線上の点
+     * };
+     * 
+     * std::vector<double> temperatures = {
+     *     20.0,  // 原点の温度
+     *     25.0,  // x軸上の温度
+     *     22.0,  // y軸上の温度
+     *     28.0   // 対角線上の温度
+     * };
+     * 
+     * SimpleLinearNDInterpolator interpolator(points, temperatures);
+     * 
+     * std::vector<double> query_point = {0.5, 0.5}; 補間点での温度を取得
+     * std::vector<double> interpolated_temp = interpolator.interpolate(query_point);
+     * double temperature = interpolated_temp[0];  // スカラー値として取得
      */
     SimpleLinearNDInterpolator(
         const std::vector<std::vector<double>> &points, 
@@ -146,9 +187,7 @@ public:
         const std::vector<double> &query_points
     ) const;
 
-private:
-    // データメンバ
-    
+private:    
     /** @brief 補間に使用する点群の座標データ */
     std::vector<std::vector<double>> points_;
     
@@ -166,8 +205,6 @@ private:
     
     /** @brief 三角分割で生成された単体（simplex）のリスト。各単体は点のインデックスで表現 */
     std::vector<std::vector<int>> simplices_;
-
-    // プライベートメソッド
 
     /**
      * @brief 入力点群に対してDelaunay三角分割を実行
@@ -256,4 +293,13 @@ private:
     std::vector<std::vector<double>> convertTo2DVector(
         const std::vector<double> &values
     ) const;
+
+    
+    /**
+     * @brief 2次元配列が矩形であるかをチェック
+     * 
+     * @param m チェック対象の2次元配列
+     * @return 矩形であれば true、そうでなければ false
+     */
+    static bool isRectangular(const std::vector<std::vector<double>> &m);
 };

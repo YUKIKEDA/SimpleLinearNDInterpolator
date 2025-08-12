@@ -24,6 +24,8 @@
 #include <cmath>
 #include <libqhullcpp/QhullVertexSet.h>
 #include <limits>
+#include <string>
+
 
 /**
  * @brief 多次元値を持つ点群から補間器を構築（メインコンストラクタ）
@@ -34,20 +36,66 @@
  * 3. Delaunay三角分割を構築
  * 
  * データ構造の前提：
- * - points_[d][i]: d次元目のi番目の点の座標
- * - values_[v][i]: v番目の値のi番目の点での値
+ * - points_[i][d]: i番目の点のd次元座標（point-major）
+ * - values_[i][v]: i番目の点のv番目の値（point-major）
  * 
  * @note この実装では、点群データを次元優先（dimension-major）形式で保存
  * @note 三角分割の構築に失敗した場合は例外が投げられる
+ * 
+ * @example
+ * std::vector<std::vector<double>> points = { // 2次元の点群（point-major）
+ *     {0.0, 0.0},
+ *     {1.0, 0.0},
+ *     {2.0, 0.0}
+ * };
+ * std::vector<std::vector<double>> values = { // 各点における2成分の値（point-major）
+ *     {1.0, 0.5},
+ *     {2.0, 1.0},
+ *     {1.5, 0.8}
+ * };
+ * 
+ * SimpleLinearNDInterpolator interpolator(points, values);
+ * 
+ * std::vector<double> query_point = {0.5, 0.5}; // 補間点での値を取得
+ * std::vector<double> interpolated_values = interpolator.interpolate(query_point);
  */
 SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
-    const std::vector<std::vector<double>> &points, 
+    const std::vector<std::vector<double>> &points,
     const std::vector<std::vector<double>> &values)
 {
-    points_ = points;
-    values_ = values;
-    n_dims_ = static_cast<int>(points.size());
-    n_points_ = static_cast<int>(points[0].size());
+    // 入力検証（points）: point-major [num_points][num_dims]
+    if (points.empty() || points[0].empty())
+    {
+        throw std::invalid_argument("points must be a non-empty 2D array");
+    }
+    if (!isRectangular(points))
+    {
+        throw std::invalid_argument("points must be rectangular");
+    }
+    const size_t num_points = points.size();
+    const size_t num_dims = points[0].size();
+    if (num_points <= num_dims)
+    {
+        throw std::invalid_argument("insufficient points: need at least num_dims+1 points");
+    }
+    points_ = points; // point-major のまま保持
+    n_points_ = static_cast<int>(num_points);
+    n_dims_ = static_cast<int>(num_dims);
+
+    // 入力検証（values）: point-major [num_points][value_dims]
+    if (values.empty() || values[0].empty())
+    {
+        throw std::invalid_argument("values must be a non-empty 2D array");
+    }
+    if (!isRectangular(values))
+    {
+        throw std::invalid_argument("values must be rectangular");
+    }
+    if (values.size() != num_points)
+    {
+        throw std::invalid_argument("values.size() must equal points.size() (point-major)");
+    }
+    values_ = values; // point-major のまま保持
 
     buildTriangulation(points_);
 }
@@ -61,6 +109,19 @@ SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
  * 
  * @note convertTo2DVector()を使用してスカラー値をベクトル形式に統一
  * @note 内部的には全て多次元値として扱われる
+ * 
+ * @example
+ * std::vector<std::vector<double>> points = { // 2次元空間の点群（point-major）
+ *     {0.0, 0.0},
+ *     {1.0, 1.0},
+ *     {2.0, 0.0}
+ * };
+ * std::vector<double> values = {1.0, 2.0, 1.5};  // 各点でのスカラー値（例：温度）
+ * 
+ * SimpleLinearNDInterpolator interpolator(points, values);
+ * 
+ * std::vector<double> query_point = {0.5, 0.5}; // 補間点での値を取得
+ * std::vector<double> interpolated_values = interpolator.interpolate(query_point); // interpolated_values[0] に補間されたスカラー値が格納される
  */
 SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
     const std::vector<std::vector<double>> &points, 
@@ -102,6 +163,17 @@ SimpleLinearNDInterpolator::~SimpleLinearNDInterpolator()
  * 
  * @note 単体が見つからない点はNaNのまま残される
  * @note 計算量は O(M * S) ここでMはクエリ点数、Sは単体数
+ * 
+ * @example
+ * SimpleLinearNDInterpolator interpolator; // 2次元空間での3つのクエリ点に対する補間
+ * 
+ * std::vector<std::vector<double>> query_points = { // ... データの設定 ...
+ *     {1.5, 2.0},  // 1番目のクエリ点
+ *     {3.0, 1.5},  // 2番目のクエリ点
+ *     {2.5, 3.0}   // 3番目のクエリ点
+ * };
+ * 
+ * auto results = interpolator.interpolate(query_points); // results[0] = 1番目のクエリ点での補間値ベクトル, results[1] = 2番目のクエリ点での補間値ベクトル, results[2] = 3番目のクエリ点での補間値ベクトル
  */
 std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
     const std::vector<std::vector<double>> &query_points) const
@@ -118,7 +190,7 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
     }
 
     const size_t num_queries = query_points.size();
-    const size_t value_dims = values_.size();
+    const size_t value_dims = values_[0].size();
 
     std::vector<std::vector<double>> results(num_queries, std::vector<double>(value_dims, std::numeric_limits<double>::quiet_NaN()));
 
@@ -133,14 +205,14 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
         }
 
         const auto &indices = simplices_[static_cast<size_t>(simplex_idx)];
-        // 値の線形結合: v = sum_j lambda_j * values(:, vertex_j)
+        // 値の線形結合: v = sum_j lambda_j * values(vertex_j, :)
         for (size_t k = 0; k < value_dims; ++k)
         {
             double acc = 0.0;
             for (size_t j = 0; j < indices.size(); ++j)
             {
                 int vertex_index = indices[j];
-                acc += bary[j] * values_[k][static_cast<size_t>(vertex_index)];
+                acc += bary[j] * values_[static_cast<size_t>(vertex_index)][k];
             }
             results[i][k] = acc;
         }
@@ -159,6 +231,20 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
  * 
  * @note 実装の重複を避けるため、メイン補間メソッドに処理を委譲
  * @note パフォーマンス：単一点の場合でも配列操作のオーバーヘッドあり
+ * 
+ * @example
+ * SimpleLinearNDInterpolator interpolator; // 2次元空間での単一クエリ点に対する補間
+ * 
+ * std::vector<double> query_point = {1.5, 2.0}; // ... データの設定 ...
+ * 
+ * auto result = interpolator.interpolate(query_point); // result = クエリ点での補間値ベクトル, 例：values_が2次元の場合、resultは2要素のベクトル
+ * 
+ * double first_component = result[0]; // 単一の値成分にアクセス
+ * double second_component = result[1];
+ * 
+ * @example
+ * std::vector<double> query_point_3d = {1.0, 2.0, 3.0}; // 3次元空間での単一クエリ点に対する補間
+ * auto result_3d = interpolator.interpolate(query_point_3d); // result_3d = 3次元クエリ点での補間値ベクトル
  */
 std::vector<double> SimpleLinearNDInterpolator::interpolate(
     const std::vector<double> &query_points) const
@@ -204,12 +290,12 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate(
 void SimpleLinearNDInterpolator::buildTriangulation(
     const std::vector<std::vector<double>> &points)
 {
-    // 点群を Qhull 期待形式 [x1,y1,..., x2,y2,...] にフラット化（point-major）
+    // 点群を Qhull 期待形式 [x1,y1,..., x2,y2,...] にフラット化（point-major 保持から変換）
     std::vector<double> flattened_points;
     flattened_points.reserve(static_cast<size_t>(n_points_ * n_dims_));
     for (int i = 0; i < n_points_; ++i) {
         for (int d = 0; d < n_dims_; ++d) {
-            flattened_points.push_back(points[static_cast<size_t>(d)][static_cast<size_t>(i)]);
+            flattened_points.push_back(points[static_cast<size_t>(i)][static_cast<size_t>(d)]);
         }
     }
 
@@ -574,8 +660,8 @@ std::vector<double> SimpleLinearNDInterpolator::solveLinearEquation(
  * @brief 指定されたインデックスの点の座標を取得
  * 
  * 実装詳細：
- * - 内部データ構造：points_[d][i] = d次元目のi番目の点の座標
- * - 出力形式：[x, y, z, ...] （次元順の座標ベクトル）
+ * - 内部データ構造：points_[i][d] = i番目の点のd次元座標（point-major）
+ * - 出力形式：[x, y, z, ...]
  * 
  * データアクセスパターン：
  * - 次元優先（dimension-major）形式から点優先（point-major）形式に変換
@@ -589,12 +675,7 @@ std::vector<double> SimpleLinearNDInterpolator::solveLinearEquation(
  */
 std::vector<double> SimpleLinearNDInterpolator::getPointCoordinates(int point_index) const
 {
-    std::vector<double> p(static_cast<size_t>(n_dims_));
-    for (int d = 0; d < n_dims_; ++d)
-    {
-        p[static_cast<size_t>(d)] = points_[static_cast<size_t>(d)][static_cast<size_t>(point_index)];
-    }
-    return p;
+    return points_[static_cast<size_t>(point_index)];
 }
 
 /**
@@ -623,10 +704,38 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::convertTo2DVector(
     const std::vector<double> &values
 ) const
 {
-    // スカラー値ベクトルを「値次元優先（value-major）」形式へ
-    // 期待する内部形: values_[value_dim][point_index]
-    // スカラーの場合は value_dim = 0 の 1 行に全点分を格納する
-    std::vector<std::vector<double>> values_2d(1);
-    values_2d[0] = values; // 1 x N
+    // スカラー値ベクトル（長さ N）を point-major ([N][1]) に変換
+    std::vector<std::vector<double>> values_2d(values.size(), std::vector<double>(1, 0.0));
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        values_2d[i][0] = values[i];
+    }
     return values_2d;
+}
+
+/**
+ * @brief 2次元配列が矩形であるかをチェック
+ * 
+ * 実装詳細：
+ * - 空の配列は矩形ではない
+ * - 各行の要素数が最初の行の要素数と一致しているかをチェック
+ * 
+ * @param m チェック対象の2次元配列
+ * @return 矩形であれば true、そうでなければ false
+ */
+bool SimpleLinearNDInterpolator::isRectangular(const std::vector<std::vector<double>> &m)
+{
+    if (m.empty())
+    {
+        return false;
+    }
+    const size_t cols = m[0].size();
+    for (const auto &row : m)
+    {
+        if (row.size() != cols)
+        {
+            return false;
+        }
+    }
+    return true;
 }
