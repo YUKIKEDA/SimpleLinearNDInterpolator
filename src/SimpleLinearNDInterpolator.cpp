@@ -39,7 +39,7 @@
  * - points_[i][d]: i番目の点のd次元座標（point-major）
  * - values_[i][v]: i番目の点のv番目の値（point-major）
  * 
- * @note この実装では、点群データを次元優先（dimension-major）形式で保存
+ * @note この実装では、点群データをpoint-major形式で保存
  * @note 三角分割の構築に失敗した場合は例外が投げられる
  * 
  * @example
@@ -155,10 +155,10 @@ SimpleLinearNDInterpolator::~SimpleLinearNDInterpolator()
  * 
  * データ構造の処理：
  * - results[i][k]: i番目のクエリ点のk番目の値成分
- * - values_[k][vertex]: k番目の値成分のvertex番目の点での値
+ * - values_[vertex][k]: vertex番目の点のk番目の値成分（point-major）
  * 
  * 補間公式：
- * v[k] = Σ(j) λ[j] * values[k][vertex[j]]
+ * v[k] = Σ(j) λ[j] * values[vertex[j]][k]
  * ここで、λ[j]は重心座標、vertex[j]は単体の頂点インデックス
  * 
  * @note 単体が見つからない点はNaNのまま残される
@@ -178,9 +178,9 @@ SimpleLinearNDInterpolator::~SimpleLinearNDInterpolator()
 std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
     const std::vector<std::vector<double>> &query_points) const
 {
-    const double eps = 1e-12;
+    const double eps = 1e-12;  // 数値計算の精度閾値
 
-    // 入力チェック
+    // 入力チェック: 各クエリポイントの次元数が一致するか確認
     for (const auto &qp : query_points)
     {
         if (static_cast<int>(qp.size()) != n_dims_)
@@ -189,32 +189,42 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
         }
     }
 
+    // クエリポイントの数と値の次元数を取得
     const size_t num_queries = query_points.size();
     const size_t value_dims = values_[0].size();
 
+    // 結果を格納する配列を初期化（初期値はNaN）
     std::vector<std::vector<double>> results(num_queries, std::vector<double>(value_dims, std::numeric_limits<double>::quiet_NaN()));
 
+    // 各クエリポイントに対して補間を実行
     for (size_t i = 0; i < num_queries; ++i)
     {
+        // 現在のクエリポイントが含まれる単体を探索し、重心座標を計算
         std::vector<double> bary;
         int simplex_idx = findSimplex(query_points[i], bary, eps);
+        
         if (simplex_idx < 0)
         {
-            // 単体が見つからない場合は NaN のまま
+            // 単体が見つからない場合は、そのポイントの結果はNaNのまま
             continue;
         }
 
+        // 見つかった単体の頂点インデックスを取得
         const auto &indices = simplices_[static_cast<size_t>(simplex_idx)];
-        // 値の線形結合: v = sum_j lambda_j * values(vertex_j, :)
+        
+        // 重心座標を使用して線形補間を実行
+        // 各値の次元に対して: v = sum_j (lambda_j * values[vertex_j][k])
         for (size_t k = 0; k < value_dims; ++k)
         {
-            double acc = 0.0;
+            double acc = 0.0;  // 累積値を初期化
+            
+            // 単体の各頂点の値を重心座標で重み付けして合計
             for (size_t j = 0; j < indices.size(); ++j)
             {
-                int vertex_index = indices[j];
-                acc += bary[j] * values_[static_cast<size_t>(vertex_index)][k];
+                int vertex_index = indices[j];  // 頂点のインデックス
+                acc += bary[j] * values_[static_cast<size_t>(vertex_index)][k];  // 重心座標 × 頂点値
             }
-            results[i][k] = acc;
+            results[i][k] = acc;  // 補間結果を保存
         }
     }
 
@@ -272,7 +282,7 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate(
  * 4. 結果から単体リストを構築
  * 
  * データ変換の詳細：
- * - 内部形式：points_[d][i] (d次元目のi番目の点)
+ * - 内部形式：points_[i][d] (i番目の点のd次元座標、point-major)
  * - Qhull形式：[x1,y1,z1, x2,y2,z2, ...] (点順に次元を連続配置)
  * 
  * Qhullオプションの説明：
@@ -281,8 +291,8 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate(
  * - Qc: 凸包の中心を保持
  * - Qz: 無限遠点を追加（数値安定性向上）
  * - Q12: エラー報告レベル設定
- * - Qx: 高次元（5次元以上）での数値安定性向上
  * - Qt: 三角形/四面体/単体に分割
+ * - Qx: 高次元（5次元以上）での数値安定性向上
  * 
  * @note 5次元以上の場合、Qxオプションを追加して数値安定性を向上
  * @note 例外処理：Qhullの内部エラーをランタイムエラーとして再投げ
@@ -290,7 +300,7 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate(
 void SimpleLinearNDInterpolator::buildTriangulation(
     const std::vector<std::vector<double>> &points)
 {
-    // 点群を Qhull 期待形式 [x1,y1,..., x2,y2,...] にフラット化（point-major 保持から変換）
+    // 点群を Qhull 期待形式 [x1,y1,..., x2,y2,...] にフラット化
     std::vector<double> flattened_points;
     flattened_points.reserve(static_cast<size_t>(n_points_ * n_dims_));
     for (int i = 0; i < n_points_; ++i) {
@@ -350,41 +360,53 @@ void SimpleLinearNDInterpolator::buildTriangulation(
  */
 void SimpleLinearNDInterpolator::buildSimplexList()
 {
+    // 既存の単体リストをクリアして新しいリストを構築開始
     simplices_.clear();
 
+    // Qhullオブジェクトが存在しない場合は早期リターン
     if (!qhull_)
     {
         return;
     }
 
     // Qhull が生成したファセット（シンプレクス）を走査
+    // facetList()は全てのファセットを返す
     for (orgQhull::QhullFacet facet : qhull_->facetList())
     {
         // Delaunay の場合、上側（upper）ファセットは除外（下側が Delaunay シンプレクス）
+        // isUpperDelaunay()は上側ファセットかどうかを判定
         if (qhull_->isDelaunay() && facet.isUpperDelaunay())
         {
-            continue;
+            continue; // 上側ファセットはスキップ
         }
 
         // 念のため非単体はスキップ（Qt 指定で単体化されているはず）
+        // isSimplicial()はファセットが単体（三角形、四面体など）かどうかを判定
         if (!facet.isSimplicial())
         {
-            continue;
+            continue; // 非単体ファセットはスキップ
         }
 
+        // 現在のファセットの頂点インデックスを格納するベクター
+        // n_dims_ + 1個の頂点を持つN次元単体のため、事前に容量を確保
         std::vector<int> simplex_indices;
         simplex_indices.reserve(static_cast<size_t>(n_dims_ + 1));
 
+        // ファセットの頂点リストを取得
         auto vertices = facet.vertices();
+        
+        // 各頂点のポイントIDを抽出してsimplex_indicesに追加
         for (auto it = vertices.begin(); it != vertices.end(); ++it)
         {
-            orgQhull::QhullVertex v = *it;
-            int point_id = static_cast<int>(v.point().id());
-            simplex_indices.push_back(point_id);
+            orgQhull::QhullVertex v = *it;                   // 頂点オブジェクトを取得
+            int point_id = static_cast<int>(v.point().id()); // 頂点のポイントIDを取得
+            simplex_indices.push_back(point_id);             // 頂点インデックスリストに追加
         }
 
+        // 頂点インデックスが正しく抽出された場合のみ、単体リストに追加
         if (!simplex_indices.empty())
         {
+            // std::moveを使用してベクターの所有権を移動（コピーを避ける）
             simplices_.push_back(std::move(simplex_indices));
         }
     }
@@ -425,47 +447,61 @@ int SimpleLinearNDInterpolator::findSimplex(
     std::vector<double> &barycentric_coordinates, 
     double eps) const
 {
+    // 出力用の重心座標ベクトルをクリア
     barycentric_coordinates.clear();
 
     // 各シンプレクスを走査して、query_point が内点となるものを探す
+    // 全単体に対して重心座標を計算し、有効な単体を見つけるまで続行
     for (size_t simplex_index = 0; simplex_index < simplices_.size(); ++simplex_index)
     {
-        // 重心座標を計算
+        // 現在の単体での重心座標を計算
+        // calculateBarycentricCoordinatesは指定された単体内でのクエリ点の重心座標を返す
         std::vector<double> lambdas = calculateBarycentricCoordinates(query_point, static_cast<int>(simplex_index));
 
         // 次元不一致はスキップ
+        // 重心座標はn_dims_ + 1個の要素を持つべき（N次元単体はN+1個の頂点）
         if (lambdas.size() != static_cast<size_t>(n_dims_ + 1))
         {
-            continue;
+            continue; // 次元が一致しない単体はスキップ
         }
 
-        // すべての係数が -eps 以上か確認
+        // すべての係数が -eps 以上か確認（非負性チェック）
+        // 重心座標の各係数は理論的には非負（λ[i] >= 0）であるべき
+        // 数値誤差を考慮して-eps以上の許容範囲を設定
         bool non_negative = true;
-        double sum_lambda = 0.0;
+        double sum_lambda = 0.0; // 重心座標の合計を計算（正規化チェック用）
+        
         for (double w : lambdas)
         {
-            if (w < -eps)
+            if (w < -eps) // 許容誤差epsを超えて負の値がある場合
             {
                 non_negative = false;
-                break;
+                break; // 1つでも条件を満たさない場合は即座に終了
             }
-            sum_lambda += w;
+            sum_lambda += w; // 合計を累積
         }
 
+        // 非負性条件を満たさない場合は次の単体をチェック
         if (!non_negative)
         {
-            continue;
+            continue; // 非負性を満たさない単体はスキップ
         }
 
-        // 合計が 1 に近いか確認
+        // 合計が 1 に近いか確認（正規化条件チェック）
+        // 重心座標の理論的性質：Σλ[i] = 1
+        // 数値誤差を考慮して1.0±epsの範囲内かチェック
         if (std::abs(sum_lambda - 1.0) <= eps)
         {
+            // 条件を満たす単体が見つかった場合
+            // std::moveを使用してベクターの所有権を移動（コピーを避ける）
             barycentric_coordinates = std::move(lambdas);
+            // 見つかった単体のインデックスを返す
             return static_cast<int>(simplex_index);
         }
     }
 
-    // 見つからない場合
+    // 全ての単体をチェックしても条件を満たすものが見つからない場合
+    // -1は「単体が見つからない」ことを示す特殊な値
     return -1;
 }
 
@@ -501,53 +537,80 @@ std::vector<double> SimpleLinearNDInterpolator::calculateBarycentricCoordinates(
     int simplex_index) const
 {
     // 対象シンプレクスの頂点インデックス
+    // 単体インデックスの範囲チェック（負の値や配列サイズを超える値は無効）
     if (simplex_index < 0 || simplex_index >= static_cast<int>(simplices_.size()))
     {
-        return {};
+        return {}; // 無効なインデックスの場合は空ベクトルを返す
     }
+    
+    // 指定された単体の頂点インデックスリストを取得
     const auto &indices = simplices_[static_cast<size_t>(simplex_index)];
+    
+    // 頂点数の妥当性チェック（N次元単体はN+1個の頂点を持つべき）
     if (static_cast<int>(indices.size()) != n_dims_ + 1)
     {
-        return {};
+        return {}; // 頂点数が期待値と異なる場合は空ベクトルを返す
     }
 
-    // 参照頂点 V0 を取得
+    // 参照頂点 V0 を取得（重心座標計算の基準点として使用）
+    // V0は単体の最初の頂点で、他の頂点との相対位置を計算する際の原点となる
     const std::vector<double> V0 = getPointCoordinates(indices[0]);
 
     // 行列 A と 右辺 b を構築: A * w = (x - V0), 列 A[:,j] = V_{j+1} - V0
+    // AはN×N行列、bはN次元ベクトル
+    // 各列A[:,j]は頂点V_{j+1}から参照頂点V0への相対ベクトル
     std::vector<std::vector<double>> A(static_cast<size_t>(n_dims_), std::vector<double>(static_cast<size_t>(n_dims_), 0.0));
     std::vector<double> b(static_cast<size_t>(n_dims_), 0.0);
 
+    // 右辺ベクトルbを構築: b = query_point - V0
+    // クエリ点から参照頂点V0への相対ベクトルを計算
     for (int d = 0; d < n_dims_; ++d)
     {
         b[static_cast<size_t>(d)] = query_point[static_cast<size_t>(d)] - V0[static_cast<size_t>(d)];
     }
 
+    // 係数行列Aを構築: A[:,j] = V_{j+1} - V0
+    // 各列jは頂点V_{j+1}から参照頂点V0への相対ベクトル
+    // これにより線形方程式系 A*w = b が構築される
     for (int j = 0; j < n_dims_; ++j)
     {
+        // 頂点V_{j+1}の座標を取得（indices[0]はV0なので、j+1番目の頂点）
         const std::vector<double> Vj = getPointCoordinates(indices[static_cast<size_t>(j + 1)]);
+        
+        // 列jの各次元dについて相対ベクトルを計算
         for (int d = 0; d < n_dims_; ++d)
         {
             A[static_cast<size_t>(d)][static_cast<size_t>(j)] = Vj[static_cast<size_t>(d)] - V0[static_cast<size_t>(d)];
         }
     }
 
-    // w を解く
+    // 線形方程式 A*w = b を解いてw（relative coordinates）を取得
+    // wは重心座標の相対的な値で、後で正規化して重心座標λに変換する
     std::vector<double> w = solveLinearEquation(A, b);
+    
+    // 解の次元チェック（wはn_dims_個の要素を持つべき）
     if (static_cast<int>(w.size()) != n_dims_)
     {
-        return {};
+        return {}; // 解が正しく得られなかった場合は空ベクトルを返す
     }
 
-    // Barycentric座標に変換
+    // 相対座標wから重心座標λに変換
+    // 重心座標の定義: λ[0] = 1 - Σw[j], λ[j+1] = w[j]
+    // これにより Σλ[i] = 1 の正規化条件が満たされる
     std::vector<double> lambdas(static_cast<size_t>(n_dims_ + 1), 0.0);
-    double sum_w = 0.0;
+    double sum_w = 0.0; // wの合計を計算（λ[0]の計算用）
+    
+    // λ[j+1] = w[j] を設定（j=0,1,...,n_dims_-1）
     for (int j = 0; j < n_dims_; ++j)
     {
-        lambdas[static_cast<size_t>(j + 1)] = w[static_cast<size_t>(j)];
-        sum_w += w[static_cast<size_t>(j)];
+        lambdas[static_cast<size_t>(j + 1)] = w[static_cast<size_t>(j)]; // λ[j+1] = w[j]
+        sum_w += w[static_cast<size_t>(j)]; // 合計を累積
     }
+    
+    // λ[0] = 1 - Σw[j] を設定（正規化条件を満たすため）
     lambdas[0] = 1.0 - sum_w;
+    
+    // 計算された重心座標ベクトルを返す
     return lambdas;
 }
 
@@ -586,60 +649,84 @@ std::vector<double> SimpleLinearNDInterpolator::solveLinearEquation(
     const std::vector<std::vector<double>> &A, 
     const std::vector<double> &b) const
 {
+    // 入力行列のサイズを取得（N×N行列のN）
     const int n = static_cast<int>(A.size());
+    
+    // 入力の妥当性チェック
+    // 1. 行列Aが空でないこと
+    // 2. 行列Aが正方行列であること（行数 = 列数）
+    // 3. 右辺ベクトルbのサイズが行列の行数と一致すること
     if (n == 0 || static_cast<int>(A[0].size()) != n || static_cast<int>(b.size()) != n)
     {
-        return {};
+        return {}; // 入力が不正な場合は空ベクトルを返す
     }
 
-    // 拡大係数行列 [A|b]
+    // 拡大係数行列 [A|b] を構築
+    // M[i][j] = A[i][j] (0 <= i,j < n), M[i][n] = b[i]
+    // これにより線形方程式 Ax = b を [A|b] の形式で扱える
     std::vector<std::vector<double>> M(n, std::vector<double>(static_cast<size_t>(n + 1), 0.0));
+    
+    // 行列Aの要素を拡大係数行列Mにコピー
     for (int i = 0; i < n; ++i)
     {
         for (int j = 0; j < n; ++j)
         {
             M[static_cast<size_t>(i)][static_cast<size_t>(j)] = A[static_cast<size_t>(i)][static_cast<size_t>(j)];
         }
+        // 右辺ベクトルbの要素を拡大係数行列の右端列に配置
         M[static_cast<size_t>(i)][static_cast<size_t>(n)] = b[static_cast<size_t>(i)];
     }
 
-    // ガウス消去（部分ピボット）
+    // ガウス消去法（部分ピボット選択付き）を実行
+    // 各列について前進消去を行い、上三角行列に変換
     for (int col = 0; col < n; ++col)
     {
-        // ピボット選択
-        int pivot = col;
-        double max_abs = std::abs(M[static_cast<size_t>(col)][static_cast<size_t>(col)]);
+        // 部分ピボット選択：現在の列で最大絶対値を持つ要素をピボットとして選択
+        // これにより数値安定性が向上し、小さなピボットによる除算を避ける
+        int pivot = col; // デフォルトでは対角要素をピボットとする
+        double max_abs = std::abs(M[static_cast<size_t>(col)][static_cast<size_t>(col)]); // 現在の対角要素の絶対値
+        
+        // 現在の列の下側の要素を走査して最大絶対値を持つ行を見つける
         for (int i = col + 1; i < n; ++i)
         {
             double v = std::abs(M[static_cast<size_t>(i)][static_cast<size_t>(col)]);
-            if (v > max_abs)
+            if (v > max_abs) // より大きな絶対値が見つかった場合
             {
-                max_abs = v;
-                pivot = i;
+                max_abs = v; // 最大値を更新
+                pivot = i;   // ピボット行を更新
             }
         }
+        
+        // ピボット要素が0の場合、行列は特異（解が存在しないか一意でない）
         if (max_abs == 0.0)
         {
-            return {};
+            return {}; // 特異行列の場合は空ベクトルを返す
         }
+        
+        // ピボット行が現在の行と異なる場合は行交換を実行
         if (pivot != col)
         {
             std::swap(M[static_cast<size_t>(pivot)], M[static_cast<size_t>(col)]);
         }
 
-        // 正規化
-        double diag = M[static_cast<size_t>(col)][static_cast<size_t>(col)];
-        for (int j = col; j <= n; ++j)
+        // ピボット行の正規化：ピボット要素を1にする
+        // これにより後続の消去処理が簡潔になる
+        double diag = M[static_cast<size_t>(col)][static_cast<size_t>(col)]; // ピボット要素（対角要素）
+        for (int j = col; j <= n; ++j) // ピボット行の全要素を正規化
         {
             M[static_cast<size_t>(col)][static_cast<size_t>(j)] /= diag;
         }
 
-        // 他行をゼロ化
+        // 他行の消去：ピボット列の他の要素を0にする
+        // これにより上三角行列が形成される
         for (int i = 0; i < n; ++i)
         {
-            if (i == col) continue;
-            double factor = M[static_cast<size_t>(i)][static_cast<size_t>(col)];
-            if (factor == 0.0) continue;
+            if (i == col) continue; // ピボット行はスキップ
+            
+            double factor = M[static_cast<size_t>(i)][static_cast<size_t>(col)]; // 消去係数
+            if (factor == 0.0) continue; // 既に0の場合はスキップ
+            
+            // 行iから行colの適切な倍数を引く（消去操作）
             for (int j = col; j <= n; ++j)
             {
                 M[static_cast<size_t>(i)][static_cast<size_t>(j)] -= factor * M[static_cast<size_t>(col)][static_cast<size_t>(j)];
@@ -647,12 +734,15 @@ std::vector<double> SimpleLinearNDInterpolator::solveLinearEquation(
         }
     }
 
-    // 解の抽出
+    // 解の抽出：拡大係数行列の右端列から解ベクトルxを取得
+    // ガウス消去後、M[i][n] = x[i] となっている
     std::vector<double> x(static_cast<size_t>(n), 0.0);
     for (int i = 0; i < n; ++i)
     {
-        x[static_cast<size_t>(i)] = M[static_cast<size_t>(i)][static_cast<size_t>(n)];
+        x[static_cast<size_t>(i)] = M[static_cast<size_t>(i)][static_cast<size_t>(n)]; // 右端列から解を抽出
     }
+    
+    // 計算された解ベクトルを返す
     return x;
 }
 
@@ -664,14 +754,14 @@ std::vector<double> SimpleLinearNDInterpolator::solveLinearEquation(
  * - 出力形式：[x, y, z, ...]
  * 
  * データアクセスパターン：
- * - 次元優先（dimension-major）形式から点優先（point-major）形式に変換
- * - メモリ局所性は最適ではないが、理解しやすいデータ構造
+ * - point-major形式のまま直接アクセス
+ * - メモリ局所性は良好（連続したメモリ領域）
  * 
  * @param point_index 取得したい点のインデックス（0からn_points_-1）
  * @return 指定された点の座標ベクトル（n_dims_要素）
  * 
  * @note 範囲チェックは行わない（呼び出し側で保証）
- * @note パフォーマンス：O(N) （Nは次元数）
+ * @note パフォーマンス：O(1) （配列の直接アクセス）
  */
 std::vector<double> SimpleLinearNDInterpolator::getPointCoordinates(int point_index) const
 {
@@ -725,17 +815,26 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::convertTo2DVector(
  */
 bool SimpleLinearNDInterpolator::isRectangular(const std::vector<std::vector<double>> &m)
 {
+    // 空の配列は矩形ではない（行が存在しないため）
     if (m.empty())
     {
         return false;
     }
+    
+    // 最初の行の要素数を基準として設定
+    // 矩形配列では全ての行が同じ要素数を持つ必要がある
     const size_t cols = m[0].size();
+    
+    // 各行の要素数をチェック
+    // 最初の行と異なる要素数を持つ行があれば、その配列は矩形ではない
     for (const auto &row : m)
     {
         if (row.size() != cols)
         {
-            return false;
+            return false; // 要素数が一致しない行を発見した場合、早期リターン
         }
     }
+    
+    // 全ての行の要素数が一致している場合、配列は矩形
     return true;
 }
