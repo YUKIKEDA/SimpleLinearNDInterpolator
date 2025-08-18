@@ -10,6 +10,9 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/generated_scipy_compat_test.cpp)
   list(APPEND TEST_SOURCES generated_scipy_compat_test.cpp)
 endif()
 
+# 最近傍フォールバックテストを追加
+list(APPEND TEST_SOURCES test_nearest_neighbor_fallback.cpp)
+
 # テスト用の実行可能ファイルを作成
 add_executable(
   test_interpolator

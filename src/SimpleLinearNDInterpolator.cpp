@@ -176,7 +176,8 @@ SimpleLinearNDInterpolator::~SimpleLinearNDInterpolator()
  * auto results = interpolator.interpolate(query_points); // results[0] = 1番目のクエリ点での補間値ベクトル, results[1] = 2番目のクエリ点での補間値ベクトル, results[2] = 3番目のクエリ点での補間値ベクトル
  */
 std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
-    const std::vector<std::vector<double>> &query_points) const
+    const std::vector<std::vector<double>> &query_points,
+    bool use_nearest_neighbor_fallback) const
 {
     const double eps = 1e-12;  // 数値計算の精度閾値
 
@@ -205,7 +206,21 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
         
         if (simplex_idx < 0)
         {
-            // 単体が見つからない場合は、そのポイントの結果はNaNのまま
+            // 単体が見つからない場合の処理
+            if (use_nearest_neighbor_fallback)
+            {
+                // 最近傍補間を使用
+                int nearest_idx = findNearestNeighbor(query_points[i]);
+                if (nearest_idx >= 0)
+                {
+                    // 最近傍点の値をコピー
+                    for (size_t k = 0; k < value_dims; ++k)
+                    {
+                        results[i][k] = values_[static_cast<size_t>(nearest_idx)][k];
+                    }
+                }
+            }
+            // そのポイントの結果はNaNのまま（デフォルト動作）
             continue;
         }
 
@@ -257,13 +272,14 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
  * auto result_3d = interpolator.interpolate(query_point_3d); // result_3d = 3次元クエリ点での補間値ベクトル
  */
 std::vector<double> SimpleLinearNDInterpolator::interpolate(
-    const std::vector<double> &query_points) const
+    const std::vector<double> &query_points,
+    bool use_nearest_neighbor_fallback) const
 {
     // 1次元のquery_pointsを2次元ベクトルに変換
     std::vector<std::vector<double>> query_points_2d = {query_points};
     
     // 1番目のinterpolateメソッドを呼び出し
-    auto result_2d = interpolate(query_points_2d);
+    auto result_2d = interpolate(query_points_2d, use_nearest_neighbor_fallback);
     
     // 結果を1次元ベクトルに変換（クエリ1点分の値の次元ベクトル）
     if (!result_2d.empty()) {
@@ -813,6 +829,109 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::convertTo2DVector(
  * @param m チェック対象の2次元配列
  * @return 矩形であれば true、そうでなければ false
  */
+/**
+ * @brief 最近傍点のインデックスを見つける
+ * 
+ * 実装アルゴリズム：
+ * 1. 全ての入力点を線形探索
+ * 2. 各点とクエリ点の距離の2乗を計算
+ * 3. 最小距離の点のインデックスを返す
+ * 
+ * 距離計算：
+ * - ユークリッド距離の2乗を使用（平方根計算を省略）
+ * - d² = Σ(xi - qi)² (iは次元インデックス)
+ * 
+ * パフォーマンス：
+ * - 計算量：O(N * D) ここでNは点数、Dは次元数
+ * - 最適化の余地：KD-treeなどの空間分割データ構造
+ * 
+ * @param query_point 検索対象のクエリ点
+ * @return 最近傍点のインデックス、エラーの場合は-1
+ * 
+ * @note 線形探索のため、大量の点がある場合は性能が劣化
+ * @note 同じ最小距離の点が複数ある場合、最初に見つかった点を返す
+ */
+int SimpleLinearNDInterpolator::findNearestNeighbor(const std::vector<double> &query_point) const
+{
+    // 入力検証：クエリ点の次元数チェック
+    if (static_cast<int>(query_point.size()) != n_dims_)
+    {
+        return -1; // 次元不一致の場合はエラー
+    }
+    
+    // 点群が空の場合はエラー
+    if (n_points_ <= 0)
+    {
+        return -1;
+    }
+    
+    // 最小距離（2乗）と対応する点のインデックスを初期化
+    double min_distance_squared = std::numeric_limits<double>::max();
+    int nearest_index = -1;
+    
+    // 全ての入力点に対して距離を計算
+    for (int i = 0; i < n_points_; ++i)
+    {
+        // 現在の点の座標を取得
+        const std::vector<double> &point = points_[static_cast<size_t>(i)];
+        
+        // ユークリッド距離の2乗を計算
+        double distance_squared = calculateDistanceSquared(query_point, point);
+        
+        // より近い点が見つかった場合は更新
+        if (distance_squared < min_distance_squared)
+        {
+            min_distance_squared = distance_squared;
+            nearest_index = i;
+        }
+    }
+    
+    // 最近傍点のインデックスを返す
+    return nearest_index;
+}
+
+/**
+ * @brief 2点間のユークリッド距離の2乗を計算
+ * 
+ * 実装詳細：
+ * - 平方根計算を省略してパフォーマンスを向上
+ * - 距離の比較には2乗値で十分
+ * - d² = Σ(xi - yi)² (iは次元インデックス)
+ * 
+ * パフォーマンス：
+ * - 計算量：O(D) ここでDは次元数
+ * - 平方根計算を省略することで高速化
+ * 
+ * @param point1 第1の点の座標
+ * @param point2 第2の点の座標
+ * @return 2点間のユークリッド距離の2乗
+ * 
+ * @note 次元数の一致は呼び出し側で保証される前提
+ * @note 距離の大小比較には2乗値で十分
+ */
+double SimpleLinearNDInterpolator::calculateDistanceSquared(
+    const std::vector<double> &point1, 
+    const std::vector<double> &point2) const
+{
+    // 2点の次元数が異なる場合は無限大を返す（エラーケース）
+    if (point1.size() != point2.size())
+    {
+        return std::numeric_limits<double>::max();
+    }
+    
+    // ユークリッド距離の2乗を計算
+    double distance_squared = 0.0;
+    const size_t dims = point1.size();
+    
+    for (size_t d = 0; d < dims; ++d)
+    {
+        double diff = point1[d] - point2[d]; // 各次元での差分
+        distance_squared += diff * diff;      // 差分の2乗を累積
+    }
+    
+    return distance_squared;
+}
+
 bool SimpleLinearNDInterpolator::isRectangular(const std::vector<std::vector<double>> &m)
 {
     // 空の配列は矩形ではない（行が存在しないため）

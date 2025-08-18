@@ -138,25 +138,28 @@ public:
      * 
      * @param query_points 補間を行いたい点群。各要素は座標を表すベクトル
      *                     例: {{qx1,qy1}, {qx2,qy2}, ...} for 2D query points
+     * @param use_nearest_neighbor_fallback 単体が見つからない場合に最近傍補間を使用するか
      * 
      * @return 各クエリ点における補間値のベクトル。
      *         query_points[i]に対してreturn_value[i]が対応。
      *         各補間値は、補間器構築時の値と同じ次元のベクトル。
      * 
      * @throw std::invalid_argument クエリ点の次元が不正な場合
-     * @throw std::runtime_error 補間に失敗した場合（例：点が凸包の外部にある場合）
+     * @throw std::runtime_error 補間に失敗した場合（use_nearest_neighbor_fallback=falseかつ点が凸包の外部にある場合）
      * 
-     * @note クエリ点が入力点群の凸包外部にある場合、最も近い境界での外挿が行われます
-     * @note 計算量はO(M * log(N))です。Mはクエリ点数、Nは入力点数
+     * @note use_nearest_neighbor_fallback=falseの場合、凸包外の点はNaNが返される
+     * @note use_nearest_neighbor_fallback=trueの場合、凸包外では最近傍点の値を返す
+     * @note 最近傍補間の計算量はO(M * N)です。Mはクエリ点数、Nは入力点数
      * 
      * 使用例：
      * @code
      * std::vector<std::vector<double>> queries = {{0.3, 0.7}, {0.8, 0.2}};
-     * auto results = interpolator.interpolate(queries);
+     * auto results = interpolator.interpolate(queries, true);
      * @endcode
      */
     std::vector<std::vector<double>> interpolate(
-        const std::vector<std::vector<double>> &query_points
+        const std::vector<std::vector<double>> &query_points,
+        bool use_nearest_neighbor_fallback = false
     ) const;
 
     /**
@@ -167,24 +170,27 @@ public:
      * 
      * @param query_points 補間を行いたい点の座標
      *                     例: {qx, qy} for 2D query point
+     * @param use_nearest_neighbor_fallback 単体が見つからない場合に最近傍補間を使用するか
      * 
      * @return クエリ点における補間値。
      *         スカラー値で構築された場合は1要素のベクトル、
      *         ベクトル値で構築された場合は対応する次元のベクトル。
      * 
      * @throw std::invalid_argument クエリ点の次元が不正な場合
-     * @throw std::runtime_error 補間に失敗した場合（例：点が凸包の外部にある場合）
+     * @throw std::runtime_error 補間に失敗した場合（use_nearest_neighbor_fallback=falseかつ点が凸包の外部にある場合）
      * 
-     * @note クエリ点が入力点群の凸包外部にある場合、最も近い境界での外挿が行われます
-     * @note 計算量はO(log(N))です。Nは入力点数
+     * @note use_nearest_neighbor_fallback=falseの場合、凸包外の点はNaNが返される
+     * @note use_nearest_neighbor_fallback=trueの場合、凸包外では最近傍点の値を返す
+     * @note 最近傍補間の計算量はO(N)です。Nは入力点数
      * 
      * 使用例：
      * @code
-     * std::vector<double> result = interpolator.interpolate({0.5, 0.5});
+     * std::vector<double> result = interpolator.interpolate({0.5, 0.5}, true);
      * @endcode
      */
     std::vector<double> interpolate(
-        const std::vector<double> &query_points
+        const std::vector<double> &query_points,
+        bool use_nearest_neighbor_fallback = false
     ) const;
 
 private:    
@@ -280,6 +286,23 @@ private:
      * @return 指定された点の座標ベクトル
      */
     std::vector<double> getPointCoordinates(int point_index) const;
+
+    /**
+     * @brief 最近傍点のインデックスを見つける
+     * 
+     * @param query_point 検索対象のクエリ点
+     * @return 最近傍点のインデックス
+     */
+    int findNearestNeighbor(const std::vector<double> &query_point) const;
+
+    /**
+     * @brief 2点間のユークリッド距離の2乗を計算
+     * 
+     * @param point1 第1の点の座標
+     * @param point2 第2の点の座標
+     * @return 2点間のユークリッド距離の2乗
+     */
+    double calculateDistanceSquared(const std::vector<double> &point1, const std::vector<double> &point2) const;
 
     /**
      * @brief 1次元ベクトル値を2次元ベクトル形式に変換
