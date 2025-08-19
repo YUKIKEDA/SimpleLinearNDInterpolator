@@ -430,7 +430,7 @@ void SimpleLinearNDInterpolator::buildTriangulation(
     {
         // Qhullを初期化
         qhull_ = std::make_unique<orgQhull::Qhull>();
-        qhull_.value()->runQhull(
+        qhull_->runQhull(
             "",
             n_dims_,
             n_points_,
@@ -474,18 +474,18 @@ void SimpleLinearNDInterpolator::buildSimplexList()
     simplices_ = std::vector<std::vector<int>>();
 
     // Qhullオブジェクトが存在しない場合は早期リターン
-    if (!qhull_.has_value())
+    if (!qhull_)
     {
         return;
     }
 
     // Qhull が生成したファセット（シンプレクス）を走査
     // facetList()は全てのファセットを返す
-    for (orgQhull::QhullFacet facet : qhull_.value()->facetList())
+    for (orgQhull::QhullFacet facet : qhull_->facetList())
     {
         // Delaunay の場合、上側（upper）ファセットは除外（下側が Delaunay シンプレクス）
         // isUpperDelaunay()は上側ファセットかどうかを判定
-        if (qhull_.value()->isDelaunay() && facet.isUpperDelaunay())
+        if (qhull_->isDelaunay() && facet.isUpperDelaunay())
         {
             continue; // 上側ファセットはスキップ
         }
@@ -1434,7 +1434,8 @@ void SimpleLinearNDInterpolator::setupProjectedInterpolation(
         // 注意: 循環参照を避けるため、直接new演算子を使用
         projected_interpolator_ = std::make_unique<SimpleLinearNDInterpolator>(
             projected_points, 
-            values
+            values,
+            false // 再帰的なフォールバックを防ぐ
         );
     }
     catch (const std::exception &)

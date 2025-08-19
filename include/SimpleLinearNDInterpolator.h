@@ -227,7 +227,7 @@ private:
     int n_points_;
 
     /** @brief Delaunay三角分割を行うQhullオブジェクト（2次元以上の場合のみ使用） */
-    std::optional<std::unique_ptr<orgQhull::Qhull>> qhull_;
+    std::unique_ptr<orgQhull::Qhull> qhull_;
     
     /** @brief 三角分割で生成された単体（simplex）のリスト。各単体は点のインデックスで表現（2次元以上の場合のみ使用） */
     std::optional<std::vector<std::vector<int>>> simplices_;
