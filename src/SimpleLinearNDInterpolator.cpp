@@ -1499,95 +1499,70 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolateWithDege
 ) const
 {
     const size_t num_queries = query_points.size();
+    if (values_.empty()) {
+        return std::vector<std::vector<double>>(num_queries);
+    }
     const size_t value_dims = values_[0].size();
     
-    // 結果を初期化（NaNで初期化）
+    // 結果をNaNで初期化
     std::vector<std::vector<double>> results(
         num_queries, 
         std::vector<double>(value_dims, std::numeric_limits<double>::quiet_NaN())
     );
     
-    // 有効次元が0の場合は最近傍補間のみ
+    // --- 戦略1: 有効次元が0の場合 (全点が実質的に同一位置) ---
     if (effective_dimensions_ <= 0) {
-        // 全点が実質的に同一位置にあるため、全点の値の平均値を計算する
-        if (n_points_ == 0) {
-            return results; // 点がない場合はNaNのまま
-        }
-
-        const size_t value_dims = values_[0].size();
-        std::vector<double> avg_values(value_dims, 0.0);
-        for (int i = 0; i < n_points_; ++i) {
-            for (size_t k = 0; k < value_dims; ++k) {
-                avg_values[k] += values_[static_cast<size_t>(i)][k];
+        if (n_points_ > 0) {
+            // 全点の値の平均値を計算
+            std::vector<double> avg_values(value_dims, 0.0);
+            for (int i = 0; i < n_points_; ++i) {
+                for (size_t k = 0; k < value_dims; ++k) {
+                    avg_values[k] += values_[static_cast<size_t>(i)][k];
+                }
             }
-        }
-
-        for (size_t k = 0; k < value_dims; ++k) {
-            avg_values[k] /= static_cast<double>(n_points_);
-        }
-        
-        // 全てのクエリに対して同じ平均値を返す
-        for (size_t i = 0; i < num_queries; ++i) {
-            results[i] = avg_values;
+            for (size_t k = 0; k < value_dims; ++k) {
+                avg_values[k] /= static_cast<double>(n_points_);
+            }
+            // 全てのクエリに対して同じ平均値を返す
+            std::fill(results.begin(), results.end(), avg_values);
         }
         return results;
     }
     
-    // 射影補間器が利用可能な場合
+    // --- 戦略2: 射影補間が利用可能な場合 ---
     if (projected_interpolator_.has_value() && projection_matrix_.has_value()) {
-        const auto &proj_matrix = projection_matrix_.value();
-        const size_t original_dims = static_cast<size_t>(n_dims_);
-        const size_t effective_dims = static_cast<size_t>(effective_dimensions_);
-        
-        // クエリ点を射影空間に変換
-        std::vector<std::vector<double>> projected_queries(
-            num_queries,
-            std::vector<double>(effective_dims, 0.0)
-        );
-        
-        for (size_t i = 0; i < num_queries; ++i) {
-            if (query_points[i].size() != original_dims) {
-                continue; // 次元不一致の場合はNaNのまま
-            }
-            
-            for (size_t j = 0; j < effective_dims; ++j) {
-                double projected_coord = 0.0;
-                for (size_t k = 0; k < original_dims; ++k) {
-                    projected_coord += query_points[i][k] * proj_matrix[k][j];
-                }
-                projected_queries[i][j] = projected_coord;
-            }
-        }
-        
         try {
-            // 射影空間で補間を実行
-            auto projected_results = projected_interpolator_.value()->interpolate(
+            // --- クエリ点の射影計算 ---
+            
+            // 1. std::vectorをEigen::Matrixに変換
+            Eigen::MatrixXd query_points_matrix = vectorToEigenMatrix(query_points);
+            Eigen::MatrixXd proj_matrix_eigen = vectorToEigenMatrix(projection_matrix_.value());
+
+            // 2. Eigenの最適化された行列積で射影クエリ点を一括計算
+            Eigen::MatrixXd projected_queries_matrix = query_points_matrix * proj_matrix_eigen;
+
+            // 3. 計算結果をstd::vector形式に戻す
+            std::vector<std::vector<double>> projected_queries = eigenMatrixToVector(projected_queries_matrix);
+            
+            // 4. 射影空間で補間を実行し、結果を直接返す
+            return projected_interpolator_.value()->interpolate(
                 projected_queries, 
                 use_nearest_neighbor_fallback
             );
-            
-            // 射影補間の結果をコピー（値は変換不要）
-            for (size_t i = 0; i < num_queries; ++i) {
-                if (i < projected_results.size()) {
-                    results[i] = projected_results[i];
-                }
-            }
-            
-            return results;
         }
         catch (const std::exception &) {
-            // 射影補間に失敗した場合は最近傍補間にフォールバック
+            // 射影補間に何らかの理由で失敗した場合、戦略3（最近傍補間）にフォールバックする
         }
     }
     
-    // 最後のフォールバック：最近傍補間
+    // --- 戦略3: 最後のフォールバック手段 (最近傍補間) ---
+    // 射影補間器が利用できない、または実行に失敗した場合にここに来る
     for (size_t i = 0; i < num_queries; ++i) {
+        // クエリ点の次元が元の空間の次元と一致する場合のみ処理
         if (query_points[i].size() == static_cast<size_t>(n_dims_)) {
             int nearest_idx = findNearestNeighbor(query_points[i]);
             if (nearest_idx >= 0) {
-                for (size_t k = 0; k < value_dims; ++k) {
-                    results[i][k] = values_[static_cast<size_t>(nearest_idx)][k];
-                }
+                results[i] = values_[static_cast<size_t>(nearest_idx)];
             }
         }
     }
