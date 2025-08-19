@@ -80,17 +80,23 @@ TEST_F(Test1DInterpolation, BasicVectorInterpolation) {
     EXPECT_NEAR(result[1], 1.5, 1e-10);  // (1.0 + 2.0) / 2 = 1.5
 }
 
-// 範囲外での外挿テスト
-TEST_F(Test1DInterpolation, Extrapolation) {
+// 範囲外のクエリに対してNaNが返されることをテスト
+TEST_F(Test1DInterpolation, ExtrapolationReturnsNaN) {
     SimpleLinearNDInterpolator interpolator(points_1d, values_scalar);
     
-    // 左側外挿
-    auto result = interpolator.interpolate({-1.0});
-    EXPECT_NEAR(result[0], 0.0, 1e-10);  // 線形外挿: 1.0 + (2.0-1.0) * (-1.0-0.0) / (1.0-0.0) = 0.0
+    // 左側の範囲外の点
+    auto result_left = interpolator.interpolate({-1.0});
     
-    // 右側外挿
-    result = interpolator.interpolate({4.0});
-    EXPECT_NEAR(result[0], 12.0, 1e-10);  // 線形外挿: 4.0 + (8.0-4.0) * (4.0-2.0) / (3.0-2.0) = 12.0
+    // 結果が空でないことを確認 (次元数が合っていれば空にはならないはず)
+    ASSERT_FALSE(result_left.empty());
+    // 結果の最初の要素が NaN であることを確認
+    EXPECT_TRUE(std::isnan(result_left[0]));
+    
+    // 右側の範囲外の点
+    auto result_right = interpolator.interpolate({4.0});
+
+    ASSERT_FALSE(result_right.empty());
+    EXPECT_TRUE(std::isnan(result_right[0]));
 }
 
 // 範囲外での最近傍補間テスト

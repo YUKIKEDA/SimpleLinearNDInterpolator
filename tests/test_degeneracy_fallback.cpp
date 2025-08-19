@@ -287,20 +287,26 @@ TEST_F(DegeneracyFallbackTest, MultipileQueries_DegenerateFallback) {
     
     // 複数のクエリ点で補間
     std::vector<std::vector<double>> query_points = {
-        {0.5, 0.5},   // 直線上
-        {1.5, 1.5},   // 直線上
-        {0.25, 0.25}, // 直線上
-        {2.5, 2.5}    // 直線外（外挿）
+        {0.5, 0.5},   // 直線上, 範囲内
+        {1.5, 1.5},   // 直線上, 範囲内
+        {0.25, 0.25}, // 直線上, 範囲内
+        {2.5, 2.5}    // 直線外（新しい仕様ではNaNになるはず）
     };
     
     auto results = interp.interpolate(query_points);
     
     EXPECT_EQ(results.size(), query_points.size());
     
-    for (size_t i = 0; i < results.size(); ++i) {
-        EXPECT_TRUE(isValidResult(results[i]));
+    // 範囲内の点（最初の3つ）の結果を検証
+    for (size_t i = 0; i < query_points.size() - 1; ++i) {
+        EXPECT_TRUE(isValidResult(results[i])) << "Query point at index " << i << " should be valid.";
         EXPECT_EQ(results[i].size(), 1);
     }
+
+    // 範囲外の点（最後の1つ）の結果を検証
+    const size_t last_index = query_points.size() - 1;
+    EXPECT_FALSE(isValidResult(results[last_index])) << "Query point at index " << last_index << " should be NaN.";
+    EXPECT_EQ(results[last_index].size(), 1);
 }
 
 /**

@@ -1086,33 +1086,8 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate1D(
         if (use_nearest_neighbor_fallback) {
             return findNearestNeighbor1D(query_x, sorted_indices);
         } else {
-            // 外挿
-            int idx1, idx2;
-            if (query_x < min_x) {
-                // 左側外挿：最初の2点を使用
-                idx1 = sorted_indices[0];
-                idx2 = sorted_indices[1];
-            } else { // query_x > max_x
-                // 右側外挿：最後の2点を使用
-                idx1 = sorted_indices[n_points_ - 2];
-                idx2 = sorted_indices[n_points_ - 1];
-            }
-            double x1 = points_[idx1][0];
-            double x2 = points_[idx2][0];
-            
-            std::vector<double> result(value_dims);
-            for (size_t k = 0; k < value_dims; ++k) {
-                double v1 = values_[idx1][k];
-                double v2 = values_[idx2][k];
-                // ゼロ除算を避ける
-                double denominator = x2 - x1;
-                if (std::abs(denominator) < 1e-12) {
-                    result[k] = v1;
-                } else {
-                    result[k] = v1 + (v2 - v1) * (query_x - x1) / denominator;
-                }
-            }
-            return result;
+            // 外挿は行わず、値の次元数ぶんのNaNを詰めたベクトルを返す
+            return std::vector<double>(value_dims, std::numeric_limits<double>::quiet_NaN());
         }
     }
     
