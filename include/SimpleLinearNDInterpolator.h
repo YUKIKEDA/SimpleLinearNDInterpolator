@@ -200,7 +200,20 @@ public:
         bool use_nearest_neighbor_fallback = false
     ) const;
 
-private:    
+private:
+    // === 定数 ===
+    // SVDによる縮退判定時のランク許容誤差
+    static constexpr double RankTolerance = 1e-12;
+
+    // 重心座標が単体の内部/境界にあると判定するための許容誤差
+    static constexpr double BarycentricEpsilon = 1e-12;
+
+    // 線形方程式ソルバーで特異行列（行列式がほぼ0）と判定するための許容誤差
+    static constexpr double SingularMatrixEpsilon = 1e-12;
+    
+    // 1D補間で2点が同一座標とみなすための許容誤差
+    static constexpr double SamePositionEpsilon1D = 1e-12;
+
     /** @brief 補間に使用する点群の座標データ */
     std::vector<std::vector<double>> points_;
     

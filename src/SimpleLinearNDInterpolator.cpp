@@ -102,7 +102,7 @@ SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
         int effective_dims = 0;
         std::vector<std::vector<double>> projection_matrix;
         
-        is_degenerate_ = !analyzeDegeneracy(points_, 1e-12, effective_dims, projection_matrix);
+        is_degenerate_ = !analyzeDegeneracy(points_, RankTolerance, effective_dims, projection_matrix);
         effective_dimensions_ = effective_dims;
         
         if (is_degenerate_)
@@ -141,7 +141,7 @@ SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
         // 縮退チェック（フォールバック無し）
         int effective_dims = 0;
         std::vector<std::vector<double>> projection_matrix;
-        bool is_valid = analyzeDegeneracy(points_, 1e-12, effective_dims, projection_matrix);
+        bool is_valid = analyzeDegeneracy(points_, RankTolerance, effective_dims, projection_matrix);
         
         if (!is_valid)
         {
@@ -272,8 +272,6 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
         return results;
     }
     
-    const double eps = 1e-12;  // 数値計算の精度閾値
-
     // 入力チェック: 各クエリポイントの次元数が一致するか確認
     for (const auto &qp : query_points)
     {
@@ -295,7 +293,7 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
     {
         // 現在のクエリポイントが含まれる単体を探索し、重心座標を計算
         std::vector<double> bary;
-        int simplex_idx = findSimplex(query_points[i], bary, eps);
+        int simplex_idx = findSimplex(query_points[i], bary, BarycentricEpsilon);
         
         if (simplex_idx < 0)
         {
@@ -811,8 +809,7 @@ std::vector<double> SimpleLinearNDInterpolator::solveLinearEquation(
     // 行列の可逆性をチェック（特異行列の検出）
     // 行列式が0に近い場合は数値的に特異とみなす
     double det = eigenA.determinant();
-    constexpr double epsilon = 1e-12;  // 数値許容誤差
-    if (std::abs(det) < epsilon)
+    if (std::abs(det) < SingularMatrixEpsilon)
     {
         return {}; // 特異行列または数値的に不安定な場合は空ベクトルを返す
     }
@@ -1071,6 +1068,7 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate1D(
         // それ以外は初期化エラーか、補間不可能な状態
         throw std::logic_error("1D interpolator is not properly initialized or has insufficient points.");
     }
+    
     // optionalから値を取り出す (以降は .value() を付けてアクセス)
     const auto& sorted_indices = sorted_indices_1d_.value();
     
@@ -1119,7 +1117,7 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate1D(
     std::vector<double> result(value_dims);
     double denominator = x2 - x1;
 
-    if (std::abs(denominator) < 1e-12) {
+    if (std::abs(denominator) < SamePositionEpsilon1D) {
         // 同じ位置の点の場合は、query_xに近い方の値を返す
         // (ここではx2側の値を採用するが、平均など他の戦略もありうる)
         return values_[idx2];
