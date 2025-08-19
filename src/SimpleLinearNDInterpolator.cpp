@@ -1173,48 +1173,58 @@ std::vector<double> SimpleLinearNDInterpolator::findNearestNeighbor1D(
     const std::vector<int> &sorted_indices
 ) const
 {
+    // --- 1. エッジケースの処理 ---
     if (sorted_indices.empty()) {
-        // 空の場合はNaNベクトルを返す
+        // 点群が空の場合、値の次元数に合わせてNaNベクトルを返す
+        if (values_.empty()) {
+            return {};
+        }
         const size_t value_dims = values_[0].size();
         return std::vector<double>(value_dims, std::numeric_limits<double>::quiet_NaN());
     }
-    
-    // 単一点の場合
+
     if (sorted_indices.size() == 1) {
-        return values_[sorted_indices[0]];
+        return values_[static_cast<size_t>(sorted_indices[0])];
     }
-    
-    const double min_x = points_[sorted_indices[0]][0];
-    const double max_x = points_[sorted_indices[sorted_indices.size() - 1]][0];
-    
-    // 範囲外の場合は最も近い端点を返す
-    if (query_x <= min_x) {
-        return values_[sorted_indices[0]];
+
+    // --- 2. 範囲外のクエリの処理 ---
+    // 最初の点より小さいか、最後の点より大きい場合は、最も近い端点を返す。
+    const int first_idx = sorted_indices[0];
+    const int last_idx = sorted_indices.back();
+
+    if (query_x <= points_[static_cast<size_t>(first_idx)][0]) {
+        return values_[static_cast<size_t>(first_idx)];
     }
-    if (query_x >= max_x) {
-        return values_[sorted_indices[sorted_indices.size() - 1]];
+    if (query_x >= points_[static_cast<size_t>(last_idx)][0]) {
+        return values_[static_cast<size_t>(last_idx)];
     }
+
+    // --- 3. 二分探索で隣接区間を特定 ---
+    // query_x 以上のx座標を持つ最初の要素へのイテレータを見つける (O(log N))
+    auto it = std::lower_bound(sorted_indices.begin(), sorted_indices.end(), query_x,
+        [this](int index, double value) {
+            // std::lower_bound のカスタム比較関数
+            // points_[index][0] が value より小さい場合に true を返す
+            return points_[static_cast<size_t>(index)][0] < value;
+        });
+
+    // 上記の範囲外チェックにより、itがbegin()やend()になることはないため、
+    // 安全に前後の要素にアクセスできる。
     
-    // 範囲内の場合：隣接する2点のうち近い方を選択
-    for (size_t i = 0; i < sorted_indices.size() - 1; ++i) {
-        double x1 = points_[sorted_indices[i]][0];
-        double x2 = points_[sorted_indices[i + 1]][0];
-        
-        if (query_x >= x1 && query_x <= x2) {
-            // 2点のうち近い方を選択
-            double dist1 = std::abs(query_x - x1);
-            double dist2 = std::abs(query_x - x2);
-            
-            if (dist1 <= dist2) {
-                return values_[sorted_indices[i]];
-            } else {
-                return values_[sorted_indices[i + 1]];
-            }
-        }
+    // it は query_x の右側にある点を指す
+    const int idx2 = *it;
+    // --it は query_x の左側にある点を指す
+    const int idx1 = *(--it);
+
+    // --- 4. 隣接する2点のうち、より近い方を選択 ---
+    const double x1 = points_[static_cast<size_t>(idx1)][0];
+    const double x2 = points_[static_cast<size_t>(idx2)][0];
+
+    if (std::abs(query_x - x1) <= std::abs(query_x - x2)) {
+        return values_[static_cast<size_t>(idx1)];
+    } else {
+        return values_[static_cast<size_t>(idx2)];
     }
-    
-    // ここに到達することはないはずだが、安全のため最初の点を返す
-    return values_[sorted_indices[0]];
 }
 
 /**
