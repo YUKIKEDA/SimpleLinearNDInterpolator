@@ -736,7 +736,7 @@ std::vector<double> SimpleLinearNDInterpolator::calculateBarycentricCoordinates(
  * 
  * 実装アルゴリズム：
  * 1. std::vectorからEigen::MatrixXdとEigen::VectorXdに変換
- * 2. Eigenの高度に最適化されたPartialPivLU分解を使用
+ * 2. Eigenの高度に最適化されたFullPivLU分解を使用
  * 3. 数値安定性と性能の両立を図る
  * 4. 結果をstd::vectorに変換して返す
  * 
@@ -746,11 +746,11 @@ std::vector<double> SimpleLinearNDInterpolator::calculateBarycentricCoordinates(
  * - 高度な数値安定性アルゴリズム
  * - コンパイル時最適化（小サイズ行列の場合）
  * 
- * PartialPivLU分解の特徴：
- * - 部分ピボット選択付きLU分解
- * - 一般的な正方行列に対して高い数値安定性
+ * FullPivLU分解の特徴：
+ * - 完全ピボット選択付きLU分解
+ * - 最高レベルの数値安定性を提供
  * - O(N³)計算量だが高度に最適化された実装
- * - 条件数チェックによる特異行列の検出
+ * - isInvertible()による特異行列の確実な検出
  * 
  * @param A 係数行列（N×N）
  * @param b 右辺ベクトル（N要素）
