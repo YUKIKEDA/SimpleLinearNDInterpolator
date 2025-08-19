@@ -16,6 +16,9 @@ list(APPEND TEST_SOURCES test_nearest_neighbor_fallback.cpp)
 # 1次元補間テストを追加
 list(APPEND TEST_SOURCES test_1d_interpolation.cpp)
 
+# 縮退判定とフォールバック処理テストを追加
+list(APPEND TEST_SOURCES test_degeneracy_fallback.cpp)
+
 # テスト用の実行可能ファイルを作成
 add_executable(
   test_interpolator

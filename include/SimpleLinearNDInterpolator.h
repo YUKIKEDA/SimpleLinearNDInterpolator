@@ -44,10 +44,12 @@ public:
      *               例: {{x1,y1}, {x2,y2}, ...} for 2D points
      * @param values 各点に対応する値のベクトル。points[i]にvalues[i]が対応
      *               例: {{vx1,vy1,vz1}, {vx2,vy2,vz2}, ...} for 3D vectors
+     * @param enable_degeneracy_fallback 縮退した点群でフォールバック処理を有効にするか（デフォルト: false）
      * 
      * @throw std::invalid_argument points.size() != values.size()の場合
      * @throw std::invalid_argument pointsが空の場合
      * @throw std::invalid_argument 点の次元が不一致の場合
+     * @throw std::invalid_argument 点数不足または縮退（enable_degeneracy_fallback=falseの場合）
      * @throw std::runtime_error Delaunay三角分割の構築に失敗した場合
      * 
      * @note 最低でもN+1個の点が必要です（Nは空間の次元数）
@@ -76,7 +78,8 @@ public:
      */
     SimpleLinearNDInterpolator(
         const std::vector<std::vector<double>> &points, 
-        const std::vector<std::vector<double>> &values
+        const std::vector<std::vector<double>> &values,
+        bool enable_degeneracy_fallback = false
     );
 
     /**
@@ -89,10 +92,12 @@ public:
      *               例: {{x1,y1}, {x2,y2}, ...} for 2D points
      * @param values 各点に対応するスカラー値。points[i]にvalues[i]が対応
      *               例: {v1, v2, v3, ...} for scalar values
+     * @param enable_degeneracy_fallback 縮退した点群でフォールバック処理を有効にするか（デフォルト: false）
      * 
      * @throw std::invalid_argument points.size() != values.size()の場合
      * @throw std::invalid_argument pointsまたはvaluesが空の場合
      * @throw std::invalid_argument 点の次元が不一致の場合
+     * @throw std::invalid_argument 点数不足または縮退（enable_degeneracy_fallback=falseの場合）
      * @throw std::runtime_error Delaunay三角分割の構築に失敗した場合
      * 
      * @note 最低でもN+1個の点が必要です（Nは空間の次元数）
@@ -121,7 +126,8 @@ public:
      */
     SimpleLinearNDInterpolator(
         const std::vector<std::vector<double>> &points, 
-        const std::vector<double> &values
+        const std::vector<double> &values,
+        bool enable_degeneracy_fallback = false
     );
 
     /**
@@ -212,6 +218,21 @@ private:
     
     /** @brief 三角分割で生成された単体（simplex）のリスト。各単体は点のインデックスで表現（2次元以上の場合のみ使用） */
     std::optional<std::vector<std::vector<int>>> simplices_;
+
+    /** @brief 点群が縮退しているかどうかのフラグ */
+    bool is_degenerate_;
+    
+    /** @brief 縮退している場合の有効次元数（実際にデータが分散している次元数） */
+    int effective_dimensions_;
+    
+    /** @brief 縮退している場合の射影行列（高次元から有効次元への射影用） */
+    std::optional<std::vector<std::vector<double>>> projection_matrix_;
+    
+    /** @brief 縮退している場合の射影された点群データ */
+    std::optional<std::vector<std::vector<double>>> projected_points_;
+    
+    /** @brief 縮退している場合の射影空間での補間器 */
+    std::optional<std::unique_ptr<SimpleLinearNDInterpolator>> projected_interpolator_;
 
     /**
      * @brief 入力点群に対してDelaunay三角分割を実行
@@ -316,6 +337,58 @@ private:
      */
     std::vector<std::vector<double>> convertTo2DVector(
         const std::vector<double> &values
+    ) const;
+
+    /**
+     * @brief 点群の縮退状況を詳細に分析し、フォールバック情報を取得
+     * 
+     * 点群の縮退状況を分析し、有効次元数や射影行列などの
+     * フォールバック補間に必要な情報を取得します。
+     * 
+     * @param points 分析対象の点群
+     * @param rank_tolerance ランク判定の数値許容誤差
+     * @param effective_dims [出力] 有効次元数
+     * @param projection_matrix [出力] 射影行列（高次元→有効次元）
+     * @return true: 縮退していない, false: 縮退している
+     * 
+     * @note 射影行列はSVDのV行列から構築される
+     * @note 有効次元での補間が可能になる
+     */
+    bool analyzeDegeneracy(
+        const std::vector<std::vector<double>> &points,
+        double rank_tolerance,
+        int &effective_dims,
+        std::vector<std::vector<double>> &projection_matrix
+    ) const;
+
+    /**
+     * @brief 縮退した点群に対する射影補間器を設定
+     * 
+     * 縮退した点群を有効次元の部分空間に射影し、
+     * その空間での補間器を構築します。
+     * 
+     * @param points 元の点群
+     * @param values 対応する値
+     */
+    void setupProjectedInterpolation(
+        const std::vector<std::vector<double>> &points,
+        const std::vector<std::vector<double>> &values
+    );
+
+    /**
+     * @brief 縮退した点群に対するフォールバック補間を実行
+     * 
+     * 縮退タイプに応じて最適な補間方法を選択：
+     * - 有効次元 > 0: 射影補間
+     * - 有効次元 = 0: 最近傍補間
+     * 
+     * @param query_points 補間対象のクエリ点群
+     * @param use_nearest_neighbor_fallback 最近傍フォールバックの使用
+     * @return 補間結果
+     */
+    std::vector<std::vector<double>> interpolateWithDegenerateFallback(
+        const std::vector<std::vector<double>> &query_points,
+        bool use_nearest_neighbor_fallback
     ) const;
 
     

@@ -9,7 +9,7 @@
  * - Qhullライブラリを使用したDelaunay三角分割の構築
  * - 重心座標系を用いた線形補間の実行
  * - 効率的な単体検索アルゴリズム
- * - 線形方程式ソルバー（ガウス消去法）
+ * - 線形方程式ソルバー
  * 
  * @author SimpleLinearNDInterpolator Project
  * @version 1.0
@@ -63,7 +63,8 @@
  */
 SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
     const std::vector<std::vector<double>> &points,
-    const std::vector<std::vector<double>> &values)
+    const std::vector<std::vector<double>> &values,
+    bool enable_degeneracy_fallback)
 {
     // 入力検証（points）: point-major [num_points][num_dims]
     if (points.empty() || points[0].empty())
@@ -76,10 +77,6 @@ SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
     }
     const size_t num_points = points.size();
     const size_t num_dims = points[0].size();
-    if (num_points <= num_dims)
-    {
-        throw std::invalid_argument("insufficient points: need at least num_dims+1 points");
-    }
     points_ = points; // point-major のまま保持
     n_points_ = static_cast<int>(num_points);
     n_dims_ = static_cast<int>(num_dims);
@@ -99,13 +96,83 @@ SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
     }
     values_ = values; // point-major のまま保持
 
+    if (enable_degeneracy_fallback)
+    {
+        // フォールバック有効：縮退状況を分析してフォールバック準備
+        int effective_dims = 0;
+        std::vector<std::vector<double>> projection_matrix;
+        
+        is_degenerate_ = !analyzeDegeneracy(points_, 1e-12, effective_dims, projection_matrix);
+        effective_dimensions_ = effective_dims;
+        
+        if (is_degenerate_)
+        {
+            // 縮退している場合：フォールバック補間の準備
+            if (effective_dims <= 0)
+            {
+                // 全ての点が同一位置：最近傍補間のみ利用可能
+                projection_matrix_ = std::nullopt;
+                projected_points_ = std::nullopt;
+                projected_interpolator_ = std::nullopt;
+            }
+            else
+            {
+                // 部分的縮退：低次元射影補間を準備
+                projection_matrix_ = projection_matrix;
+                setupProjectedInterpolation(points_, values);
+            }
+        }
+        else
+        {
+            // 縮退していない：通常の処理
+            projection_matrix_ = std::nullopt;
+            projected_points_ = std::nullopt;
+            projected_interpolator_ = std::nullopt;
+        }
+    }
+    else
+    {
+        // フォールバック無効：従来の厳格なチェック
+        if (num_points <= num_dims)
+        {
+            throw std::invalid_argument("insufficient points: need at least num_dims+1 points");
+        }
+        
+        // 縮退チェック（フォールバック無し）
+        int effective_dims = 0;
+        std::vector<std::vector<double>> projection_matrix;
+        bool is_valid = analyzeDegeneracy(points_, 1e-12, effective_dims, projection_matrix);
+        
+        if (!is_valid)
+        {
+            throw std::invalid_argument(
+                "Input point set is degenerate. Linear interpolation cannot be performed."
+                "The point set may be concentrated on the same line, same plane, or same position."
+                "To handle degenerate point sets, set enable_degeneracy_fallback to true in the constructor."
+            );
+        }
+        
+        // 縮退していない場合の設定
+        is_degenerate_ = false;
+        effective_dimensions_ = static_cast<int>(num_dims);
+        projection_matrix_ = std::nullopt;
+        projected_points_ = std::nullopt;
+        projected_interpolator_ = std::nullopt;
+    }
+    
+    // 自身が保持する点群が縮退していない場合にのみ、三角分割を構築する。
+    // 縮退している場合、三角分割の役割は低次元空間で初期化された
+    // 内部補間器(projected_interpolator_)が担当するため、ここでは実行しない。
+    if (!is_degenerate_) 
+    {
+        buildTriangulation(points_);
+    }
+
     // 1次元の場合はQhullを使用せずに点をソートするだけ
     if (n_dims_ == 1) {
         // 1次元の場合は三角分割不要、点のソート済みインデックスのみ準備
         return;
     }
-    
-    buildTriangulation(points_);
 }
 
 /**
@@ -133,8 +200,9 @@ SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
  */
 SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
     const std::vector<std::vector<double>> &points, 
-    const std::vector<double> &values
-) : SimpleLinearNDInterpolator(points, convertTo2DVector(values))
+    const std::vector<double> &values,
+    bool enable_degeneracy_fallback
+) : SimpleLinearNDInterpolator(points, convertTo2DVector(values), enable_degeneracy_fallback)
 {
 }
 
@@ -186,7 +254,12 @@ SimpleLinearNDInterpolator::~SimpleLinearNDInterpolator()
 std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
     const std::vector<std::vector<double>> &query_points,
     bool use_nearest_neighbor_fallback) const
-{
+{    
+    // 縮退している場合のフォールバック処理
+    if (is_degenerate_) {
+        return interpolateWithDegenerateFallback(query_points, use_nearest_neighbor_fallback);
+    }
+
     // 1次元の場合は専用の補間メソッドを使用
     if (n_dims_ == 1) {
         std::vector<std::vector<double>> results;
@@ -292,23 +365,21 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
 std::vector<double> SimpleLinearNDInterpolator::interpolate(
     const std::vector<double> &query_points,
     bool use_nearest_neighbor_fallback) const
-{
-    // 1次元の場合は専用の補間メソッドを使用
-    if (n_dims_ == 1) {
-        return interpolate1D(query_points, use_nearest_neighbor_fallback);
-    }
-    
+{   
     // 1次元のquery_pointsを2次元ベクトルに変換
     std::vector<std::vector<double>> query_points_2d = {query_points};
     
-    // 1番目のinterpolateメソッドを呼び出し
+    // メインの補間メソッドを呼び出し（フォールバック処理を含む）
     auto result_2d = interpolate(query_points_2d, use_nearest_neighbor_fallback);
     
     // 結果を1次元ベクトルに変換（クエリ1点分の値の次元ベクトル）
     if (!result_2d.empty()) {
         return result_2d[0];
     }
-    return std::vector<double>();
+
+    // 補間が失敗した場合、値の次元数ぶんのNaNベクトルを返す
+    const size_t value_dims = values_.empty() ? 0 : values_[0].size();
+    return std::vector<double>(value_dims, std::numeric_limits<double>::quiet_NaN());
 }
 
 /**
@@ -1174,4 +1245,315 @@ bool SimpleLinearNDInterpolator::isRectangular(const std::vector<std::vector<dou
     
     // 全ての行の要素数が一致している場合、配列は矩形
     return true;
+}
+
+/**
+ * @brief 点群の縮退状況を詳細に分析し、フォールバック情報を取得
+ * 
+ * 実装詳細：
+ * 1. SVD分析を実行して縮退状況を判定
+ * 2. 有効な特異値に対応する右特異ベクトルから射影行列を構築
+ * 3. 射影行列は元空間から有効部分空間への変換行列
+ * 
+ * 射影行列の構築：
+ * - SVD: X = U Σ V^T
+ * - 射影行列P = V[:, :effective_rank]（有効な右特異ベクトル）
+ * - 射影点群: X_proj = X * P
+ * 
+ * フォールバック戦略：
+ * - effective_dims = 0: 最近傍補間のみ
+ * - effective_dims = 1: 1次元補間
+ * - effective_dims = 2+: 低次元Delaunay補間
+ */
+bool SimpleLinearNDInterpolator::analyzeDegeneracy(
+    const std::vector<std::vector<double>> &points,
+    double rank_tolerance,
+    int &effective_dims,
+    std::vector<std::vector<double>> &projection_matrix
+) const
+{
+    // 基本的な入力検証
+    if (points.empty() || points[0].empty())
+    {
+        effective_dims = 0;
+        projection_matrix.clear();
+        return false;
+    }
+    
+    const size_t num_points = points.size();
+    const size_t num_dims = points[0].size();
+    
+    // 重心を計算
+    std::vector<double> centroid(num_dims, 0.0);
+    for (size_t i = 0; i < num_points; ++i)
+    {
+        for (size_t d = 0; d < num_dims; ++d)
+        {
+            centroid[d] += points[i][d];
+        }
+    }
+    
+    for (size_t d = 0; d < num_dims; ++d)
+    {
+        centroid[d] /= static_cast<double>(num_points);
+    }
+    
+    // 中心化点群行列を構築
+    Eigen::MatrixXd centered_matrix(static_cast<int>(num_points), static_cast<int>(num_dims));
+    
+    for (size_t i = 0; i < num_points; ++i)
+    {
+        for (size_t d = 0; d < num_dims; ++d)
+        {
+            centered_matrix(static_cast<int>(i), static_cast<int>(d)) = 
+                points[i][d] - centroid[d];
+        }
+    }
+    
+    // SVD分解を実行
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(
+        centered_matrix, 
+        Eigen::ComputeThinU | Eigen::ComputeThinV
+    );
+    
+    // 特異値と右特異ベクトルを取得
+    Eigen::VectorXd singular_values = svd.singularValues();
+    Eigen::MatrixXd V = svd.matrixV(); // 右特異ベクトル行列
+    
+    // 有効ランクを判定
+    const double max_singular_value = singular_values(0);
+    if (max_singular_value <= rank_tolerance)
+    {
+        // すべての点が重心に集中
+        effective_dims = 0;
+        projection_matrix.clear();
+        return false;
+    }
+    
+    // 有効な特異値の数を数える
+    int valid_singular_values = 0;
+    for (int i = 0; i < singular_values.size(); ++i)
+    {
+        double relative_singular_value = singular_values(i) / max_singular_value;
+        if (relative_singular_value > rank_tolerance)
+        {
+            valid_singular_values++;
+        }
+    }
+    
+    effective_dims = valid_singular_values;
+    
+    // 射影行列を構築（有効な右特異ベクトルを使用）
+    projection_matrix.assign(num_dims, std::vector<double>(valid_singular_values, 0.0));
+    
+    for (size_t i = 0; i < num_dims; ++i)
+    {
+        for (int j = 0; j < valid_singular_values; ++j)
+        {
+            projection_matrix[i][j] = V(static_cast<int>(i), j);
+        }
+    }
+    
+    // 縮退判定
+    bool is_valid = (effective_dims >= static_cast<int>(num_dims));
+    return is_valid;
+}
+
+/**
+ * @brief 縮退した点群に対する射影補間器を設定
+ * 
+ * 実装アルゴリズム：
+ * 1. 射影行列を使用して点群を低次元空間に射影
+ * 2. 射影された点群で新しい補間器を構築
+ * 3. 射影空間での補間結果を元空間に逆変換
+ * 
+ * 射影計算：
+ * - 元点群: X [n_points × n_dims]
+ * - 射影行列: P [n_dims × effective_dims]  
+ * - 射影点群: X_proj = X * P [n_points × effective_dims]
+ * 
+ * 注意事項：
+ * - 循環参照を避けるため、射影補間器は別インスタンス
+ * - effective_dimensions_ <= 0の場合は最近傍補間のみ
+ */
+void SimpleLinearNDInterpolator::setupProjectedInterpolation(
+    const std::vector<std::vector<double>> &points,
+    const std::vector<std::vector<double>> &values
+)
+{
+    // 射影行列が設定されていない場合は処理を中断
+    if (!projection_matrix_.has_value())
+    {
+        return;
+    }
+    
+    const auto &proj_matrix = projection_matrix_.value();
+    const size_t num_points = points.size();
+    const size_t original_dims = points[0].size();
+    const size_t effective_dims = static_cast<size_t>(effective_dimensions_);
+    
+    // 有効次元が0の場合は射影補間不可
+    if (effective_dims <= 0)
+    {
+        projected_points_ = std::nullopt;
+        projected_interpolator_ = std::nullopt;
+        return;
+    }
+    
+    // 点群を射影空間に変換
+    std::vector<std::vector<double>> projected_points(
+        num_points, 
+        std::vector<double>(effective_dims, 0.0)
+    );
+    
+    for (size_t i = 0; i < num_points; ++i)
+    {
+        for (size_t j = 0; j < effective_dims; ++j)
+        {
+            double projected_coord = 0.0;
+            for (size_t k = 0; k < original_dims; ++k)
+            {
+                projected_coord += points[i][k] * proj_matrix[k][j];
+            }
+            projected_points[i][j] = projected_coord;
+        }
+    }
+    
+    // 射影された点群を保存
+    projected_points_ = projected_points;
+    
+    try 
+    {
+        // 射影空間での補間器を構築
+        // 注意: 循環参照を避けるため、直接new演算子を使用
+        projected_interpolator_ = std::make_unique<SimpleLinearNDInterpolator>(
+            projected_points, 
+            values
+        );
+    }
+    catch (const std::exception &)
+    {
+        // 射影空間でも補間器の構築に失敗した場合
+        // 最近傍補間にフォールバック
+        projected_interpolator_ = std::nullopt;
+    }
+}
+
+/**
+ * @brief 縮退した点群に対するフォールバック補間を実行
+ * 
+ * 実装戦略：
+ * 1. 有効次元数に応じて補間方法を選択
+ * 2. 射影補間が利用可能な場合は射影空間で補間
+ * 3. それ以外は最近傍補間にフォールバック
+ * 
+ * 射影補間のプロセス：
+ * 1. クエリ点を射影空間に変換
+ * 2. 射影空間で補間を実行  
+ * 3. 結果はそのまま返す（値は変換不要）
+ * 
+ * フォールバック階層：
+ * 1. 射影補間（effective_dimensions > 0 かつ射影補間器あり）
+ * 2. 最近傍補間（その他の場合）
+ */
+std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolateWithDegenerateFallback(
+    const std::vector<std::vector<double>> &query_points,
+    bool use_nearest_neighbor_fallback
+) const
+{
+    const size_t num_queries = query_points.size();
+    const size_t value_dims = values_[0].size();
+    
+    // 結果を初期化（NaNで初期化）
+    std::vector<std::vector<double>> results(
+        num_queries, 
+        std::vector<double>(value_dims, std::numeric_limits<double>::quiet_NaN())
+    );
+    
+    // 有効次元が0の場合は最近傍補間のみ
+    if (effective_dimensions_ <= 0) {
+        // 全点が実質的に同一位置にあるため、全点の値の平均値を計算する
+        if (n_points_ == 0) {
+            return results; // 点がない場合はNaNのまま
+        }
+
+        const size_t value_dims = values_[0].size();
+        std::vector<double> avg_values(value_dims, 0.0);
+        for (int i = 0; i < n_points_; ++i) {
+            for (size_t k = 0; k < value_dims; ++k) {
+                avg_values[k] += values_[static_cast<size_t>(i)][k];
+            }
+        }
+        
+        for (size_t k = 0; k < value_dims; ++k) {
+            avg_values[k] /= static_cast<double>(n_points_);
+        }
+        
+        // 全てのクエリに対して同じ平均値を返す
+        for (size_t i = 0; i < num_queries; ++i) {
+            results[i] = avg_values;
+        }
+        return results;
+    }
+    
+    // 射影補間器が利用可能な場合
+    if (projected_interpolator_.has_value() && projection_matrix_.has_value()) {
+        const auto &proj_matrix = projection_matrix_.value();
+        const size_t original_dims = static_cast<size_t>(n_dims_);
+        const size_t effective_dims = static_cast<size_t>(effective_dimensions_);
+        
+        // クエリ点を射影空間に変換
+        std::vector<std::vector<double>> projected_queries(
+            num_queries,
+            std::vector<double>(effective_dims, 0.0)
+        );
+        
+        for (size_t i = 0; i < num_queries; ++i) {
+            if (query_points[i].size() != original_dims) {
+                continue; // 次元不一致の場合はNaNのまま
+            }
+            
+            for (size_t j = 0; j < effective_dims; ++j) {
+                double projected_coord = 0.0;
+                for (size_t k = 0; k < original_dims; ++k) {
+                    projected_coord += query_points[i][k] * proj_matrix[k][j];
+                }
+                projected_queries[i][j] = projected_coord;
+            }
+        }
+        
+        try {
+            // 射影空間で補間を実行
+            auto projected_results = projected_interpolator_.value()->interpolate(
+                projected_queries, 
+                use_nearest_neighbor_fallback
+            );
+            
+            // 射影補間の結果をコピー（値は変換不要）
+            for (size_t i = 0; i < num_queries; ++i) {
+                if (i < projected_results.size()) {
+                    results[i] = projected_results[i];
+                }
+            }
+            
+            return results;
+        }
+        catch (const std::exception &) {
+            // 射影補間に失敗した場合は最近傍補間にフォールバック
+        }
+    }
+    
+    // 最後のフォールバック：最近傍補間
+    for (size_t i = 0; i < num_queries; ++i) {
+        if (query_points[i].size() == static_cast<size_t>(n_dims_)) {
+            int nearest_idx = findNearestNeighbor(query_points[i]);
+            if (nearest_idx >= 0) {
+                for (size_t k = 0; k < value_dims; ++k) {
+                    results[i][k] = values_[static_cast<size_t>(nearest_idx)][k];
+                }
+            }
+        }
+    }
+    
+    return results;
 }
