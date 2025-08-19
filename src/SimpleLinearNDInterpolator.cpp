@@ -1023,9 +1023,8 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate1D(
     // 範囲外の場合の処理
     if (query_x < min_x || query_x > max_x) {
         if (use_nearest_neighbor_fallback) {
-            // 最近傍補間
-            int nearest_idx = (query_x < min_x) ? sorted_indices[0] : sorted_indices[n_points_ - 1];
-            return values_[nearest_idx];
+            // 最近傍補間を使用
+            return findNearestNeighbor1D(query_x, sorted_indices);
         } else {
             // 外挿
             if (query_x < min_x) {
@@ -1101,6 +1100,91 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate1D(
     // ここに到達することはないはずだが、安全のためNaNを返す
     std::vector<double> result(value_dims, std::numeric_limits<double>::quiet_NaN());
     return result;
+}
+
+/**
+ * @brief 1次元空間での最近傍補間を実行
+ * 
+ * 実装アルゴリズム：
+ * 1. ソート済み点群から最近傍点を探索
+ * 2. 距離の計算は1次元なので単純な絶対値差分
+ * 3. 最近傍点の値をそのまま返す
+ * 
+ * 探索方法：
+ * - バイナリサーチ風の効率的な探索
+ * - 両端の場合は直接判定
+ * - 内部の場合は隣接する点との距離比較
+ * 
+ * @param query_x クエリ点のx座標
+ * @param sorted_indices x座標でソートされた点のインデックス
+ * @return 最近傍点の値ベクトル
+ * 
+ * @note 計算量：O(1) 単純な距離比較のため
+ * @note ソート済み配列を前提としているため効率的
+ * 
+ * @example
+ * 1次元データでの最近傍補間の使用例
+ * データ点: x=[1.0, 2.0, 3.0, 4.0], y=[10.0, 20.0, 30.0, 40.0]
+ * クエリ点: x=2.7 → 最近傍点: x=3.0, y=30.0
+ * 
+ * std::vector<double> x_coords = {1.0, 2.0, 3.0, 4.0};
+ * std::vector<std::vector<double>> values = {{10.0}, {20.0}, {30.0}, {40.0}};
+ * 
+ * std::vector<int> sorted_indices = {0, 1, 2, 3}; // ソート済みインデックス（x座標でソート済み）
+ * 
+ * double query_x = 2.7; // クエリ点での最近傍値を取得
+ * std::vector<double> result = findNearestNeighbor1D(query_x, sorted_indices); // result = {30.0} (x=3.0の点の値)
+ * 
+ * double query_x_out = 0.5; // 範囲外のクエリ点
+ * std::vector<double> result_out = findNearestNeighbor1D(query_x_out, sorted_indices); // result_out = {10.0} (x=1.0の点の値、最も近い端点)
+ */
+std::vector<double> SimpleLinearNDInterpolator::findNearestNeighbor1D(
+    double query_x,
+    const std::vector<int> &sorted_indices
+) const
+{
+    if (sorted_indices.empty()) {
+        // 空の場合はNaNベクトルを返す
+        const size_t value_dims = values_[0].size();
+        return std::vector<double>(value_dims, std::numeric_limits<double>::quiet_NaN());
+    }
+    
+    // 単一点の場合
+    if (sorted_indices.size() == 1) {
+        return values_[sorted_indices[0]];
+    }
+    
+    const double min_x = points_[sorted_indices[0]][0];
+    const double max_x = points_[sorted_indices[sorted_indices.size() - 1]][0];
+    
+    // 範囲外の場合は最も近い端点を返す
+    if (query_x <= min_x) {
+        return values_[sorted_indices[0]];
+    }
+    if (query_x >= max_x) {
+        return values_[sorted_indices[sorted_indices.size() - 1]];
+    }
+    
+    // 範囲内の場合：隣接する2点のうち近い方を選択
+    for (size_t i = 0; i < sorted_indices.size() - 1; ++i) {
+        double x1 = points_[sorted_indices[i]][0];
+        double x2 = points_[sorted_indices[i + 1]][0];
+        
+        if (query_x >= x1 && query_x <= x2) {
+            // 2点のうち近い方を選択
+            double dist1 = std::abs(query_x - x1);
+            double dist2 = std::abs(query_x - x2);
+            
+            if (dist1 <= dist2) {
+                return values_[sorted_indices[i]];
+            } else {
+                return values_[sorted_indices[i + 1]];
+            }
+        }
+    }
+    
+    // ここに到達することはないはずだが、安全のため最初の点を返す
+    return values_[sorted_indices[0]];
 }
 
 bool SimpleLinearNDInterpolator::isRectangular(const std::vector<std::vector<double>> &m)

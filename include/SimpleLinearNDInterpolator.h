@@ -335,6 +335,20 @@ private:
     ) const;
 
     /**
+     * @brief 1次元空間での最近傍補間を実行
+     * 
+     * 1次元空間でクエリ点に最も近い点を見つけ、その点の値を返します。
+     * 
+     * @param query_x クエリ点のx座標
+     * @param sorted_indices x座標でソートされた点のインデックス
+     * @return 最近傍点の値ベクトル
+     */
+    std::vector<double> findNearestNeighbor1D(
+        double query_x,
+        const std::vector<int> &sorted_indices
+    ) const;
+
+    /**
      * @brief 2次元配列が矩形であるかをチェック
      * 
      * @param m チェック対象の2次元配列
