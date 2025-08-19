@@ -42,6 +42,7 @@ add_library(SimpleLinearNDInterpolator ${SOURCES})
 target_include_directories(SimpleLinearNDInterpolator PUBLIC
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/third_party/qhull-2020.2/install/include
+    ${CMAKE_SOURCE_DIR}/third_party/eigen-3.4.0
 )
 
 # Qhullライブラリをリンク（cmake-buildディレクトリのライブラリを使用）

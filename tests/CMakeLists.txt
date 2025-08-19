@@ -34,6 +34,7 @@ target_link_libraries(
 target_include_directories(test_interpolator PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${CMAKE_SOURCE_DIR}/third_party/qhull-2020.2/install/include
+  ${CMAKE_SOURCE_DIR}/third_party/eigen-3.4.0
 )
 
 # CTestにテストを登録

@@ -1,4 +1,4 @@
-#include <gtest/gtest.h>
+﻿#include <gtest/gtest.h>
 #include "SimpleLinearNDInterpolator.h"
 #include <vector>
 #include <cmath>
