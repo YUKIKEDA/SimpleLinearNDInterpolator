@@ -170,6 +170,8 @@ SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
 
     // 1次元の場合はQhullを使用せずに点をソートするだけ
     if (n_dims_ == 1) {
+        // 1次元の場合の初期化処理
+        initializeFor1DInterpolation(points); 
         // 1次元の場合は三角分割不要、点のソート済みインデックスのみ準備
         return;
     }
@@ -888,6 +890,39 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::convertTo2DVector(
 }
 
 /**
+ * @brief 1次元補間用の初期化処理
+ * 
+ * 1次元補間用のソート済みインデックスを初期化します。
+ * 
+ * @param points 補間に使用する点群
+ */
+void SimpleLinearNDInterpolator::initializeFor1DInterpolation(const std::vector<std::vector<double>> &points)
+{
+    const size_t num_points = points.size();
+
+    // n_points_が0の場合は何もしない
+    if (num_points == 0) {
+        sorted_indices_1d_ = std::nullopt; // 値がないことを明示
+        return;
+    }
+
+    // ソート済みインデックスを計算
+    std::vector<int> sorted_indices(num_points);
+    for (size_t i = 0; i < num_points; ++i) {
+        sorted_indices[i] = static_cast<int>(i);
+    }
+    
+    // ラムダ式で引数の points をキャプチャする
+    std::sort(sorted_indices.begin(), sorted_indices.end(), 
+        [&points](int a, int b) {
+            return points[static_cast<size_t>(a)][0] < points[static_cast<size_t>(b)][0];
+        });
+    
+    // 計算結果をメンバ変数に格納
+    sorted_indices_1d_ = std::move(sorted_indices);
+}
+
+/**
  * @brief 最近傍点のインデックスを見つける
  * 
  * 実装アルゴリズム：
@@ -1025,104 +1060,102 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate1D(
     {
         throw std::invalid_argument("1D interpolation requires at least 2 points");
     }
+
+    // ソート済みインデックスが初期化されているかチェック
+    if (!sorted_indices_1d_.has_value()) {
+        // これは通常、点が0または1つの場合に発生する可能性がある
+        if (n_points_ == 1) {
+            // 点が1つしかない場合は、その点の値を返す
+            return values_[0];
+        }
+        // それ以外は初期化エラーか、補間不可能な状態
+        throw std::logic_error("1D interpolator is not properly initialized or has insufficient points.");
+    }
+    // optionalから値を取り出す (以降は .value() を付けてアクセス)
+    const auto& sorted_indices = sorted_indices_1d_.value();
     
     const double query_x = query_point[0];
-    const size_t value_dims = values_[0].size();
-    
-    // 点のインデックスをx座標でソート
-    std::vector<int> sorted_indices(n_points_);
-    for (int i = 0; i < n_points_; ++i) {
-        sorted_indices[i] = i;
-    }
-    
-    std::sort(sorted_indices.begin(), sorted_indices.end(), 
-        [this](int a, int b) {
-            return points_[a][0] < points_[b][0];
-        });
+    const size_t value_dims = values_[0].size();    
     
     // クエリ点の位置を特定
     const double min_x = points_[sorted_indices[0]][0];
-    const double max_x = points_[sorted_indices[n_points_ - 1]][0];
+    const double max_x = points_[sorted_indices.back()][0];
     
     // 範囲外の場合の処理
     if (query_x < min_x || query_x > max_x) {
         if (use_nearest_neighbor_fallback) {
-            // 最近傍補間を使用
             return findNearestNeighbor1D(query_x, sorted_indices);
         } else {
             // 外挿
+            int idx1, idx2;
             if (query_x < min_x) {
                 // 左側外挿：最初の2点を使用
-                int idx1 = sorted_indices[0];
-                int idx2 = sorted_indices[1];
-                double x1 = points_[idx1][0];
-                double x2 = points_[idx2][0];
-                
-                std::vector<double> result(value_dims);
-                for (size_t k = 0; k < value_dims; ++k) {
-                    double v1 = values_[idx1][k];
-                    double v2 = values_[idx2][k];
-                    result[k] = v1 + (v2 - v1) * (query_x - x1) / (x2 - x1);
-                }
-                return result;
-            } else {
+                idx1 = sorted_indices[0];
+                idx2 = sorted_indices[1];
+            } else { // query_x > max_x
                 // 右側外挿：最後の2点を使用
-                int idx1 = sorted_indices[n_points_ - 2];
-                int idx2 = sorted_indices[n_points_ - 1];
-                double x1 = points_[idx1][0];
-                double x2 = points_[idx2][0];
-                
-                std::vector<double> result(value_dims);
-                for (size_t k = 0; k < value_dims; ++k) {
-                    double v1 = values_[idx1][k];
-                    double v2 = values_[idx2][k];
-                    result[k] = v1 + (v2 - v1) * (query_x - x1) / (x2 - x1);
-                }
-                return result;
+                idx1 = sorted_indices[n_points_ - 2];
+                idx2 = sorted_indices[n_points_ - 1];
             }
-        }
-    }
-    
-    // 範囲内での補間：隣接する2点を見つける
-    for (int i = 0; i < n_points_ - 1; ++i) {
-        int idx1 = sorted_indices[i];
-        int idx2 = sorted_indices[i + 1];
-        double x1 = points_[idx1][0];
-        double x2 = points_[idx2][0];
-        
-        if (query_x >= x1 && query_x <= x2) {
-            // 線形補間を実行
-            std::vector<double> result(value_dims);
+            double x1 = points_[idx1][0];
+            double x2 = points_[idx2][0];
             
-            if (std::abs(x2 - x1) < 1e-12) {
-                // 同じ位置の点の場合は平均値を返す
-                for (size_t k = 0; k < value_dims; ++k) {
-                    result[k] = (values_[idx1][k] + values_[idx2][k]) * 0.5;
-                }
-            } else {
-                // 通常の線形補間
-                for (size_t k = 0; k < value_dims; ++k) {
-                    double v1 = values_[idx1][k];
-                    double v2 = values_[idx2][k];
-                    result[k] = v1 + (v2 - v1) * (query_x - x1) / (x2 - x1);
+            std::vector<double> result(value_dims);
+            for (size_t k = 0; k < value_dims; ++k) {
+                double v1 = values_[idx1][k];
+                double v2 = values_[idx2][k];
+                // ゼロ除算を避ける
+                double denominator = x2 - x1;
+                if (std::abs(denominator) < 1e-12) {
+                    result[k] = v1;
+                } else {
+                    result[k] = v1 + (v2 - v1) * (query_x - x1) / denominator;
                 }
             }
             return result;
         }
-        
-        // 同じx座標の点での正確な一致を確認
-        if (std::abs(query_x - x1) < 1e-12) {
-            // x1と正確に一致する場合
-            return values_[idx1];
-        }
-        if (std::abs(query_x - x2) < 1e-12) {
-            // x2と正確に一致する場合
-            return values_[idx2];
-        }
     }
     
-    // ここに到達することはないはずだが、安全のためNaNを返す
-    std::vector<double> result(value_dims, std::numeric_limits<double>::quiet_NaN());
+    // --- 二分探索による区間特定 ---
+    // query_x 以上の最初の要素を指すイテレータを見つける
+    auto it = std::lower_bound(sorted_indices.begin(), sorted_indices.end(), query_x,
+        [this](int index, double value) {
+            return points_[index][0] < value;
+        });
+
+    // 境界ケースの処理
+    if (it == sorted_indices.begin()) {
+        // query_xが最初の点と一致する場合
+        return values_[*it];
+    }
+    if (it == sorted_indices.end()) {
+        // query_xが最後の点と一致する場合 (upper_boundならあり得るが、念のため)
+        return values_[sorted_indices.back()];
+    }
+
+    // 補間に使用する2点のインデックスを決定
+    int idx2 = *it;
+    int idx1 = *(--it); // 1つ前の要素
+
+    double x1 = points_[idx1][0];
+    double x2 = points_[idx2][0];
+
+    // 線形補間を実行
+    std::vector<double> result(value_dims);
+    double denominator = x2 - x1;
+
+    if (std::abs(denominator) < 1e-12) {
+        // 同じ位置の点の場合は、query_xに近い方の値を返す
+        // (ここではx2側の値を採用するが、平均など他の戦略もありうる)
+        return values_[idx2];
+    }
+
+    double t = (query_x - x1) / denominator;
+    for (size_t k = 0; k < value_dims; ++k) {
+        double v1 = values_[idx1][k];
+        double v2 = values_[idx2][k];
+        result[k] = v1 + t * (v2 - v1);
+    }
     return result;
 }
 
@@ -1484,7 +1517,7 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolateWithDege
                 avg_values[k] += values_[static_cast<size_t>(i)][k];
             }
         }
-        
+
         for (size_t k = 0; k < value_dims; ++k) {
             avg_values[k] /= static_cast<double>(n_points_);
         }

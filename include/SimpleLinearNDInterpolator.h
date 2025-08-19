@@ -219,6 +219,9 @@ private:
     /** @brief 三角分割で生成された単体（simplex）のリスト。各単体は点のインデックスで表現（2次元以上の場合のみ使用） */
     std::optional<std::vector<std::vector<int>>> simplices_;
 
+    // 1次元補間用のソート済みインデックス (1Dの場合のみ値を持つ)
+    std::optional<std::vector<int>> sorted_indices_1d_; 
+
     /** @brief 点群が縮退しているかどうかのフラグ */
     bool is_degenerate_;
     
@@ -338,6 +341,15 @@ private:
     std::vector<std::vector<double>> convertTo2DVector(
         const std::vector<double> &values
     ) const;
+
+    /**
+     * @brief 1次元補間用の初期化処理
+     * 
+     * 1次元補間用のソート済みインデックスを初期化します。
+     * 
+     * @param points 補間に使用する点群
+     */
+    void initializeFor1DInterpolation(const std::vector<std::vector<double>>& points);
 
     /**
      * @brief 点群の縮退状況を詳細に分析し、フォールバック情報を取得
