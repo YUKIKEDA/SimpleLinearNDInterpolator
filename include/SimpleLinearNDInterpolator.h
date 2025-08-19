@@ -1,6 +1,7 @@
 ﻿#include <vector>
 #include <memory>
 #include <optional>
+#include <Eigen/Dense>
 
 namespace orgQhull {
     class Qhull;
@@ -385,6 +386,20 @@ private:
         int &effective_dims,
         std::vector<std::vector<double>> &projection_matrix
     ) const;
+    
+    /**
+     * @brief std::vector<std::vector<double>> を Eigen::MatrixXd に変換します。
+     * @param vec 変換元の2次元ベクトル。
+     * @return 変換後のEigen行列。
+     */
+    Eigen::MatrixXd vectorToEigenMatrix(const std::vector<std::vector<double>>& vec) const;
+
+    /**
+     * @brief Eigen::MatrixXd を std::vector<std::vector<double>> に変換します。
+     * @param mat 変換元のEigen行列。
+     * @return 変換後の2次元ベクトル。
+     */
+    std::vector<std::vector<double>> eigenMatrixToVector(const Eigen::MatrixXd& mat) const;
 
     /**
      * @brief 縮退した点群に対する射影補間器を設定

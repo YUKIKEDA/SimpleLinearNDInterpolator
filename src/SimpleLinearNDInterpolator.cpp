@@ -26,7 +26,6 @@
 #include <limits>
 #include <string>
 #include <algorithm>
-#include <Eigen/Dense>
 
 
 /**
@@ -1376,6 +1375,40 @@ bool SimpleLinearNDInterpolator::analyzeDegeneracy(
 }
 
 /**
+ * @brief std::vector<std::vector<double>> を Eigen::MatrixXd に変換します。
+ * @param vec 変換元の2次元ベクトル。
+ * @return 変換後のEigen行列。
+ */
+Eigen::MatrixXd SimpleLinearNDInterpolator::vectorToEigenMatrix(const std::vector<std::vector<double>>& vec) const {
+    if (vec.empty() || vec[0].empty()) {
+        return Eigen::MatrixXd(0, 0);
+    }
+    const auto rows = static_cast<Eigen::Index>(vec.size());
+    const auto cols = static_cast<Eigen::Index>(vec[0].size());
+    Eigen::MatrixXd mat(rows, cols);
+    for (Eigen::Index i = 0; i < rows; ++i) {
+        // Eigen::Map を使って効率的に行データをコピー
+        mat.row(i) = Eigen::Map<const Eigen::VectorXd>(vec[i].data(), cols);
+    }
+    return mat;
+}
+
+/**
+ * @brief Eigen::MatrixXd を std::vector<std::vector<double>> に変換します。
+ * @param mat 変換元のEigen行列。
+ * @return 変換後の2次元ベクトル。
+ */
+std::vector<std::vector<double>> SimpleLinearNDInterpolator::eigenMatrixToVector(const Eigen::MatrixXd& mat) const {
+    std::vector<std::vector<double>> vec(mat.rows(), std::vector<double>(mat.cols()));
+    for (Eigen::Index i = 0; i < mat.rows(); ++i) {
+        for (Eigen::Index j = 0; j < mat.cols(); ++j) {
+            vec[i][j] = mat(i, j);
+        }
+    }
+    return vec;
+}
+
+/**
  * @brief 縮退した点群に対する射影補間器を設定
  * 
  * 実装アルゴリズム：
@@ -1398,61 +1431,48 @@ void SimpleLinearNDInterpolator::setupProjectedInterpolation(
 )
 {
     // 射影行列が設定されていない場合は処理を中断
-    if (!projection_matrix_.has_value())
-    {
+    if (!projection_matrix_.has_value()) {
         return;
     }
     
-    const auto &proj_matrix = projection_matrix_.value();
-    const size_t num_points = points.size();
-    const size_t original_dims = points[0].size();
-    const size_t effective_dims = static_cast<size_t>(effective_dimensions_);
-    
-    // 有効次元が0の場合は射影補間不可
-    if (effective_dims <= 0)
-    {
+    // 有効次元が0の場合は射影補間は行えない
+    if (effective_dimensions_ <= 0) {
         projected_points_ = std::nullopt;
         projected_interpolator_ = std::nullopt;
         return;
     }
     
-    // 点群を射影空間に変換
-    std::vector<std::vector<double>> projected_points(
-        num_points, 
-        std::vector<double>(effective_dims, 0.0)
-    );
+    // --- 点群の射影計算 ---
+
+    // 1. std::vectorをEigen::Matrixに変換
+    Eigen::MatrixXd points_matrix = vectorToEigenMatrix(points);
+    Eigen::MatrixXd proj_matrix_eigen = vectorToEigenMatrix(projection_matrix_.value());
+
+    // 2. Eigenの最適化された行列積で射影点を一括計算
+    Eigen::MatrixXd projected_points_matrix = points_matrix * proj_matrix_eigen;
+
+    // 3. 計算結果をstd::vector形式に戻す
+    std::vector<std::vector<double>> projected_points = eigenMatrixToVector(projected_points_matrix);
     
-    for (size_t i = 0; i < num_points; ++i)
-    {
-        for (size_t j = 0; j < effective_dims; ++j)
-        {
-            double projected_coord = 0.0;
-            for (size_t k = 0; k < original_dims; ++k)
-            {
-                projected_coord += points[i][k] * proj_matrix[k][j];
-            }
-            projected_points[i][j] = projected_coord;
-        }
-    }
+    // --- 射影点群をメンバ変数に保存し、内部補間器を構築 ---
     
-    // 射影された点群を保存
-    projected_points_ = projected_points;
+    projected_points_ = std::move(projected_points);
     
-    try 
-    {
-        // 射影空間での補間器を構築
-        // 注意: 循環参照を避けるため、直接new演算子を使用
+    try {
+        // 射影された点群と元の値を用いて、低次元の補間器を構築する。
+        // 重要：内部で生成する補間器では、縮退フォールバックを無効化(`false`)し、
+        // 無限再帰ループに陥ることを防ぐ。
         projected_interpolator_ = std::make_unique<SimpleLinearNDInterpolator>(
-            projected_points, 
+            projected_points_.value(), 
             values,
-            false // 再帰的なフォールバックを防ぐ
+            false // 再帰的なフォールバックを防止
         );
     }
-    catch (const std::exception &)
-    {
-        // 射影空間でも補間器の構築に失敗した場合
-        // 最近傍補間にフォールバック
+    catch (const std::exception &) {
+        // 低次元空間でも補間器の構築に失敗した場合（例：射影後も縮退している）、
+        // 射影補間は利用せず、最終的なフォールバック（最近傍法など）に任せる。
         projected_interpolator_ = std::nullopt;
+        projected_points_ = std::nullopt; // 関連データもクリア
     }
 }
 
