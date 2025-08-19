@@ -308,9 +308,9 @@ private:
      * @brief 指定されたインデックスの点の座標を取得
      * 
      * @param point_index 取得したい点のインデックス
-     * @return 指定された点の座標ベクトル
+     * @return 指定された点の座標ベクトルの参照
      */
-    std::vector<double> getPointCoordinates(int point_index) const;
+    const std::vector<double>& getPointCoordinates(int point_index) const;
 
     /**
      * @brief 最近傍点のインデックスを見つける

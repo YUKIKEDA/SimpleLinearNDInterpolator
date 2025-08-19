@@ -678,7 +678,7 @@ std::vector<double> SimpleLinearNDInterpolator::calculateBarycentricCoordinates(
 
     // 参照頂点 V0 を取得（重心座標計算の基準点として使用）
     // V0は単体の最初の頂点で、他の頂点との相対位置を計算する際の原点となる
-    const std::vector<double> V0 = getPointCoordinates(indices[0]);
+    const auto& V0 = getPointCoordinates(indices[0]);
 
     // 行列 A と 右辺 b を構築: A * w = (x - V0), 列 A[:,j] = V_{j+1} - V0
     // AはN×N行列、bはN次元ベクトル
@@ -699,7 +699,7 @@ std::vector<double> SimpleLinearNDInterpolator::calculateBarycentricCoordinates(
     for (int j = 0; j < n_dims_; ++j)
     {
         // 頂点V_{j+1}の座標を取得（indices[0]はV0なので、j+1番目の頂点）
-        const std::vector<double> Vj = getPointCoordinates(indices[static_cast<size_t>(j + 1)]);
+        const auto& Vj = getPointCoordinates(indices[static_cast<size_t>(j + 1)]);
         
         // 列jの各次元dについて相対ベクトルを計算
         for (int d = 0; d < n_dims_; ++d)
@@ -844,12 +844,12 @@ std::vector<double> SimpleLinearNDInterpolator::solveLinearEquation(
  * - メモリ局所性は良好（連続したメモリ領域）
  * 
  * @param point_index 取得したい点のインデックス（0からn_points_-1）
- * @return 指定された点の座標ベクトル（n_dims_要素）
+ * @return 指定された点の座標ベクトルの参照（n_dims_要素）
  * 
  * @note 範囲チェックは行わない（呼び出し側で保証）
  * @note パフォーマンス：O(1) （配列の直接アクセス）
  */
-std::vector<double> SimpleLinearNDInterpolator::getPointCoordinates(int point_index) const
+const std::vector<double>& SimpleLinearNDInterpolator::getPointCoordinates(int point_index) const
 {
     return points_[static_cast<size_t>(point_index)];
 }
