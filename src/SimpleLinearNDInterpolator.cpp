@@ -767,64 +767,39 @@ std::vector<double> SimpleLinearNDInterpolator::solveLinearEquation(
     const std::vector<std::vector<double>> &A, 
     const std::vector<double> &b) const
 {
-    // 入力行列のサイズを取得（N×N行列のN）
-    const int n = static_cast<int>(A.size());
+    // Eigenで行列のサイズを扱う際は、Eigen::Index型を使用するのが一般的
+    const auto n = static_cast<Eigen::Index>(A.size());
     
     // 入力の妥当性チェック
-    // 1. 行列Aが空でないこと
-    // 2. 行列Aが正方行列であること（行数 = 列数）
-    // 3. 右辺ベクトルbのサイズが行列の行数と一致すること
-    if (n == 0 || static_cast<int>(A[0].size()) != n || static_cast<int>(b.size()) != n)
-    {
+    if (n == 0 || static_cast<Eigen::Index>(A[0].size()) != n || static_cast<Eigen::Index>(b.size()) != n) {
         return {}; // 入力が不正な場合は空ベクトルを返す
     }
 
     // std::vectorからEigen行列・ベクトルに変換
-    // Eigen::MatrixXdは動的サイズ行列（実行時にサイズ決定）
-    // 小サイズの場合はEigenが自動的に固定サイズ最適化を適用
     Eigen::MatrixXd eigenA(n, n);
-    Eigen::VectorXd eigenB(n);
-    
-    // 係数行列Aをコピー（行メジャー順で効率的アクセス）
-    for (int i = 0; i < n; ++i)
-    {
-        for (int j = 0; j < n; ++j)
-        {
-            eigenA(i, j) = A[static_cast<size_t>(i)][static_cast<size_t>(j)];
-        }
+    for (Eigen::Index i = 0; i < n; ++i) {
+        // A[i]のデータポインタを直接マッピングして、eigenAのi行目にコピー
+        eigenA.row(i) = Eigen::Map<const Eigen::VectorXd>(A[i].data(), n);
     }
-    
-    // 右辺ベクトルbをコピー
-    for (int i = 0; i < n; ++i)
-    {
-        eigenB(i) = b[static_cast<size_t>(i)];
-    }
+    // bのデータポインタを直接マッピングして、eigenBにコピー
+    Eigen::VectorXd eigenB = Eigen::Map<const Eigen::VectorXd>(b.data(), n);
 
-    // PartialPivLU分解を使用して線形方程式を解く
-    // PartialPivLUは部分ピボット選択付きLU分解で、一般的な行列に対して
-    // 高い数値安定性と良好な性能のバランスを提供
-    Eigen::PartialPivLU<Eigen::MatrixXd> solver(eigenA);
+    // 1. FullPivLU分解を実行
+    Eigen::FullPivLU<Eigen::MatrixXd> solver(eigenA);
     
-    // 行列の可逆性をチェック（特異行列の検出）
-    // 行列式が0に近い場合は数値的に特異とみなす
-    double det = eigenA.determinant();
-    if (std::abs(det) < SingularMatrixEpsilon)
-    {
-        return {}; // 特異行列または数値的に不安定な場合は空ベクトルを返す
+    // 2. 行列の可逆性をチェック
+    if (!solver.isInvertible()) {
+        return {}; // 特異行列の場合は空ベクトルを返す
     }
     
-    // 線形方程式を解く（Ax = bのxを求める）
-    // Eigenの高度に最適化されたソルバーを使用
+    // 3. 線形方程式を解く
     Eigen::VectorXd eigenX = solver.solve(eigenB);
     
     // Eigen::VectorXdからstd::vectorに変換
     std::vector<double> x(static_cast<size_t>(n));
-    for (int i = 0; i < n; ++i)
-    {
-        x[static_cast<size_t>(i)] = eigenX(i);
-    }
+    // eigenXのデータをxのメモリ領域に直接マッピングして高速にコピー
+    Eigen::VectorXd::Map(&x[0], n) = eigenX;
     
-    // 計算された解ベクトルを返す
     return x;
 }
 
