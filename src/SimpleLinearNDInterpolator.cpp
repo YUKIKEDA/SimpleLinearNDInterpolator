@@ -500,14 +500,10 @@ void SimpleLinearNDInterpolator::buildSimplexList()
         // n_dims_ + 1個の頂点を持つN次元単体のため、事前に容量を確保
         std::vector<int> simplex_indices;
         simplex_indices.reserve(static_cast<size_t>(n_dims_ + 1));
-
-        // ファセットの頂点リストを取得
-        auto vertices = facet.vertices();
         
         // 各頂点のポイントIDを抽出してsimplex_indicesに追加
-        for (auto it = vertices.begin(); it != vertices.end(); ++it)
+        for (const auto &v : facet.vertices()) 
         {
-            orgQhull::QhullVertex v = *it;                   // 頂点オブジェクトを取得
             int point_id = static_cast<int>(v.point().id()); // 頂点のポイントIDを取得
             simplex_indices.push_back(point_id);             // 頂点インデックスリストに追加
         }
