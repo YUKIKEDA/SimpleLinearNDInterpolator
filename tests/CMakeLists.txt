@@ -13,6 +13,9 @@ endif()
 # 最近傍フォールバックテストを追加
 list(APPEND TEST_SOURCES test_nearest_neighbor_fallback.cpp)
 
+# 1次元補間テストを追加
+list(APPEND TEST_SOURCES test_1d_interpolation.cpp)
+
 # テスト用の実行可能ファイルを作成
 add_executable(
   test_interpolator

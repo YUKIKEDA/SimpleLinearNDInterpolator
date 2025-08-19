@@ -25,6 +25,7 @@
 #include <libqhullcpp/QhullVertexSet.h>
 #include <limits>
 #include <string>
+#include <algorithm>
 
 
 /**
@@ -97,6 +98,12 @@ SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
     }
     values_ = values; // point-major のまま保持
 
+    // 1次元の場合はQhullを使用せずに点をソートするだけ
+    if (n_dims_ == 1) {
+        // 1次元の場合は三角分割不要、点のソート済みインデックスのみ準備
+        return;
+    }
+    
     buildTriangulation(points_);
 }
 
@@ -179,6 +186,16 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
     const std::vector<std::vector<double>> &query_points,
     bool use_nearest_neighbor_fallback) const
 {
+    // 1次元の場合は専用の補間メソッドを使用
+    if (n_dims_ == 1) {
+        std::vector<std::vector<double>> results;
+        results.reserve(query_points.size());
+        for (const auto &qp : query_points) {
+            results.push_back(interpolate1D(qp, use_nearest_neighbor_fallback));
+        }
+        return results;
+    }
+    
     const double eps = 1e-12;  // 数値計算の精度閾値
 
     // 入力チェック: 各クエリポイントの次元数が一致するか確認
@@ -225,7 +242,7 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::interpolate(
         }
 
         // 見つかった単体の頂点インデックスを取得
-        const auto &indices = simplices_[static_cast<size_t>(simplex_idx)];
+        const auto &indices = simplices_.value()[static_cast<size_t>(simplex_idx)];
         
         // 重心座標を使用して線形補間を実行
         // 各値の次元に対して: v = sum_j (lambda_j * values[vertex_j][k])
@@ -275,6 +292,11 @@ std::vector<double> SimpleLinearNDInterpolator::interpolate(
     const std::vector<double> &query_points,
     bool use_nearest_neighbor_fallback) const
 {
+    // 1次元の場合は専用の補間メソッドを使用
+    if (n_dims_ == 1) {
+        return interpolate1D(query_points, use_nearest_neighbor_fallback);
+    }
+    
     // 1次元のquery_pointsを2次元ベクトルに変換
     std::vector<std::vector<double>> query_points_2d = {query_points};
     
@@ -336,7 +358,7 @@ void SimpleLinearNDInterpolator::buildTriangulation(
     {
         // Qhullを初期化
         qhull_ = std::make_unique<orgQhull::Qhull>();
-        qhull_->runQhull(
+        qhull_.value()->runQhull(
             "",
             n_dims_,
             n_points_,
@@ -376,22 +398,22 @@ void SimpleLinearNDInterpolator::buildTriangulation(
  */
 void SimpleLinearNDInterpolator::buildSimplexList()
 {
-    // 既存の単体リストをクリアして新しいリストを構築開始
-    simplices_.clear();
+    // simplices_を初期化
+    simplices_ = std::vector<std::vector<int>>();
 
     // Qhullオブジェクトが存在しない場合は早期リターン
-    if (!qhull_)
+    if (!qhull_.has_value())
     {
         return;
     }
 
     // Qhull が生成したファセット（シンプレクス）を走査
     // facetList()は全てのファセットを返す
-    for (orgQhull::QhullFacet facet : qhull_->facetList())
+    for (orgQhull::QhullFacet facet : qhull_.value()->facetList())
     {
         // Delaunay の場合、上側（upper）ファセットは除外（下側が Delaunay シンプレクス）
         // isUpperDelaunay()は上側ファセットかどうかを判定
-        if (qhull_->isDelaunay() && facet.isUpperDelaunay())
+        if (qhull_.value()->isDelaunay() && facet.isUpperDelaunay())
         {
             continue; // 上側ファセットはスキップ
         }
@@ -423,7 +445,7 @@ void SimpleLinearNDInterpolator::buildSimplexList()
         if (!simplex_indices.empty())
         {
             // std::moveを使用してベクターの所有権を移動（コピーを避ける）
-            simplices_.push_back(std::move(simplex_indices));
+            simplices_.value().push_back(std::move(simplex_indices));
         }
     }
 }
@@ -466,9 +488,15 @@ int SimpleLinearNDInterpolator::findSimplex(
     // 出力用の重心座標ベクトルをクリア
     barycentric_coordinates.clear();
 
+    // 1次元の場合またはsimplices_が初期化されていない場合は-1を返す
+    if (!simplices_.has_value())
+    {
+        return -1;
+    }
+
     // 各シンプレクスを走査して、query_point が内点となるものを探す
     // 全単体に対して重心座標を計算し、有効な単体を見つけるまで続行
-    for (size_t simplex_index = 0; simplex_index < simplices_.size(); ++simplex_index)
+    for (size_t simplex_index = 0; simplex_index < simplices_.value().size(); ++simplex_index)
     {
         // 現在の単体での重心座標を計算
         // calculateBarycentricCoordinatesは指定された単体内でのクエリ点の重心座標を返す
@@ -553,14 +581,20 @@ std::vector<double> SimpleLinearNDInterpolator::calculateBarycentricCoordinates(
     int simplex_index) const
 {
     // 対象シンプレクスの頂点インデックス
+    // simplices_が初期化されていない場合は空ベクトルを返す
+    if (!simplices_.has_value())
+    {
+        return {};
+    }
+    
     // 単体インデックスの範囲チェック（負の値や配列サイズを超える値は無効）
-    if (simplex_index < 0 || simplex_index >= static_cast<int>(simplices_.size()))
+    if (simplex_index < 0 || simplex_index >= static_cast<int>(simplices_.value().size()))
     {
         return {}; // 無効なインデックスの場合は空ベクトルを返す
     }
     
     // 指定された単体の頂点インデックスリストを取得
-    const auto &indices = simplices_[static_cast<size_t>(simplex_index)];
+    const auto &indices = simplices_.value()[static_cast<size_t>(simplex_index)];
     
     // 頂点数の妥当性チェック（N次元単体はN+1個の頂点を持つべき）
     if (static_cast<int>(indices.size()) != n_dims_ + 1)
@@ -930,6 +964,143 @@ double SimpleLinearNDInterpolator::calculateDistanceSquared(
     }
     
     return distance_squared;
+}
+
+/**
+ * @brief 1次元線形補間を実行
+ * 
+ * 実装アルゴリズム：
+ * 1. 点群をx座標でソート
+ * 2. クエリ点の位置を特定
+ * 3. 隣接する2点間で線形補間
+ * 4. 範囲外の場合は最近傍補間または外挿
+ * 
+ * 線形補間公式：
+ * v = v1 + (v2 - v1) * (x - x1) / (x2 - x1)
+ * ここで、x1 ≤ x ≤ x2
+ * 
+ * @param query_point 1次元のクエリ点（1要素のベクトル）
+ * @param use_nearest_neighbor_fallback 範囲外の場合に最近傍補間を使用するか
+ * @return 補間された値のベクトル
+ * 
+ * @note 計算量：O(N log N) ソート処理による
+ * @note 点群が2点未満の場合は例外を投げる
+ */
+std::vector<double> SimpleLinearNDInterpolator::interpolate1D(
+    const std::vector<double> &query_point,
+    bool use_nearest_neighbor_fallback) const
+{
+    // 入力検証：クエリ点の次元数チェック
+    if (static_cast<int>(query_point.size()) != 1)
+    {
+        throw std::invalid_argument("query point must be 1-dimensional");
+    }
+    
+    // 点群が2点未満の場合はエラー
+    if (n_points_ < 2)
+    {
+        throw std::invalid_argument("1D interpolation requires at least 2 points");
+    }
+    
+    const double query_x = query_point[0];
+    const size_t value_dims = values_[0].size();
+    
+    // 点のインデックスをx座標でソート
+    std::vector<int> sorted_indices(n_points_);
+    for (int i = 0; i < n_points_; ++i) {
+        sorted_indices[i] = i;
+    }
+    
+    std::sort(sorted_indices.begin(), sorted_indices.end(), 
+        [this](int a, int b) {
+            return points_[a][0] < points_[b][0];
+        });
+    
+    // クエリ点の位置を特定
+    const double min_x = points_[sorted_indices[0]][0];
+    const double max_x = points_[sorted_indices[n_points_ - 1]][0];
+    
+    // 範囲外の場合の処理
+    if (query_x < min_x || query_x > max_x) {
+        if (use_nearest_neighbor_fallback) {
+            // 最近傍補間
+            int nearest_idx = (query_x < min_x) ? sorted_indices[0] : sorted_indices[n_points_ - 1];
+            return values_[nearest_idx];
+        } else {
+            // 外挿
+            if (query_x < min_x) {
+                // 左側外挿：最初の2点を使用
+                int idx1 = sorted_indices[0];
+                int idx2 = sorted_indices[1];
+                double x1 = points_[idx1][0];
+                double x2 = points_[idx2][0];
+                
+                std::vector<double> result(value_dims);
+                for (size_t k = 0; k < value_dims; ++k) {
+                    double v1 = values_[idx1][k];
+                    double v2 = values_[idx2][k];
+                    result[k] = v1 + (v2 - v1) * (query_x - x1) / (x2 - x1);
+                }
+                return result;
+            } else {
+                // 右側外挿：最後の2点を使用
+                int idx1 = sorted_indices[n_points_ - 2];
+                int idx2 = sorted_indices[n_points_ - 1];
+                double x1 = points_[idx1][0];
+                double x2 = points_[idx2][0];
+                
+                std::vector<double> result(value_dims);
+                for (size_t k = 0; k < value_dims; ++k) {
+                    double v1 = values_[idx1][k];
+                    double v2 = values_[idx2][k];
+                    result[k] = v1 + (v2 - v1) * (query_x - x1) / (x2 - x1);
+                }
+                return result;
+            }
+        }
+    }
+    
+    // 範囲内での補間：隣接する2点を見つける
+    for (int i = 0; i < n_points_ - 1; ++i) {
+        int idx1 = sorted_indices[i];
+        int idx2 = sorted_indices[i + 1];
+        double x1 = points_[idx1][0];
+        double x2 = points_[idx2][0];
+        
+        if (query_x >= x1 && query_x <= x2) {
+            // 線形補間を実行
+            std::vector<double> result(value_dims);
+            
+            if (std::abs(x2 - x1) < 1e-12) {
+                // 同じ位置の点の場合は平均値を返す
+                for (size_t k = 0; k < value_dims; ++k) {
+                    result[k] = (values_[idx1][k] + values_[idx2][k]) * 0.5;
+                }
+            } else {
+                // 通常の線形補間
+                for (size_t k = 0; k < value_dims; ++k) {
+                    double v1 = values_[idx1][k];
+                    double v2 = values_[idx2][k];
+                    result[k] = v1 + (v2 - v1) * (query_x - x1) / (x2 - x1);
+                }
+            }
+            return result;
+        }
+        
+        // 同じx座標の点での正確な一致を確認
+        if (std::abs(query_x - x1) < 1e-12) {
+            // x1と正確に一致する場合
+            return values_[idx1];
+        }
+        if (std::abs(query_x - x2) < 1e-12) {
+            // x2と正確に一致する場合
+            return values_[idx2];
+        }
+    }
+    
+    // ここに到達することはないはずだが、安全のためNaNを返す
+    std::vector<double> result(value_dims, std::numeric_limits<double>::quiet_NaN());
+    return result;
 }
 
 bool SimpleLinearNDInterpolator::isRectangular(const std::vector<std::vector<double>> &m)

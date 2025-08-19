@@ -1,5 +1,6 @@
 ﻿#include <vector>
 #include <memory>
+#include <optional>
 
 namespace orgQhull {
     class Qhull;
@@ -206,11 +207,11 @@ private:
     /** @brief 点群の総数 */
     int n_points_;
 
-    /** @brief Delaunay三角分割を行うQhullオブジェクト */
-    std::unique_ptr<orgQhull::Qhull> qhull_;
+    /** @brief Delaunay三角分割を行うQhullオブジェクト（2次元以上の場合のみ使用） */
+    std::optional<std::unique_ptr<orgQhull::Qhull>> qhull_;
     
-    /** @brief 三角分割で生成された単体（simplex）のリスト。各単体は点のインデックスで表現 */
-    std::vector<std::vector<int>> simplices_;
+    /** @brief 三角分割で生成された単体（simplex）のリスト。各単体は点のインデックスで表現（2次元以上の場合のみ使用） */
+    std::optional<std::vector<std::vector<int>>> simplices_;
 
     /**
      * @brief 入力点群に対してDelaunay三角分割を実行
@@ -318,6 +319,21 @@ private:
     ) const;
 
     
+    /**
+     * @brief 1次元線形補間を実行
+     * 
+     * 1次元空間での線形補間を行います。2つの隣接する点の間で線形補間を実行し、
+     * 範囲外の場合は最近傍補間または外挿を行います。
+     * 
+     * @param query_point 1次元のクエリ点（1要素のベクトル）
+     * @param use_nearest_neighbor_fallback 範囲外の場合に最近傍補間を使用するか
+     * @return 補間された値のベクトル
+     */
+    std::vector<double> interpolate1D(
+        const std::vector<double> &query_point,
+        bool use_nearest_neighbor_fallback = false
+    ) const;
+
     /**
      * @brief 2次元配列が矩形であるかをチェック
      * 
