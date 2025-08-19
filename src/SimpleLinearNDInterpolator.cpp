@@ -854,16 +854,6 @@ std::vector<std::vector<double>> SimpleLinearNDInterpolator::convertTo2DVector(
 }
 
 /**
- * @brief 2次元配列が矩形であるかをチェック
- * 
- * 実装詳細：
- * - 空の配列は矩形ではない
- * - 各行の要素数が最初の行の要素数と一致しているかをチェック
- * 
- * @param m チェック対象の2次元配列
- * @return 矩形であれば true、そうでなければ false
- */
-/**
  * @brief 最近傍点のインデックスを見つける
  * 
  * 実装アルゴリズム：
@@ -1187,6 +1177,16 @@ std::vector<double> SimpleLinearNDInterpolator::findNearestNeighbor1D(
     return values_[sorted_indices[0]];
 }
 
+/**
+ * @brief 2次元配列が矩形であるかをチェック
+ * 
+ * 実装詳細：
+ * - 空の配列は矩形ではない
+ * - 各行の要素数が最初の行の要素数と一致しているかをチェック
+ * 
+ * @param m チェック対象の2次元配列
+ * @return 矩形であれば true、そうでなければ false
+ */
 bool SimpleLinearNDInterpolator::isRectangular(const std::vector<std::vector<double>> &m)
 {
     // 空の配列は矩形ではない（行が存在しないため）
