@@ -109,7 +109,7 @@ SimpleLinearNDInterpolator::SimpleLinearNDInterpolator(
             // 縮退している場合：フォールバック補間の準備
             if (effective_dims <= 0)
             {
-                // 全ての点が同一位置：全点の平均値で補間利
+                // 全ての点が同一位置：全点の平均値で補間
                 projection_matrix_ = std::nullopt;
                 projected_points_ = std::nullopt;
                 projected_interpolator_ = std::nullopt;
